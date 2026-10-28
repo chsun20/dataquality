@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: ruoyi_ui/views_dashboard_auth
+title: 登录注册与首页入口视图
+scope:
+    - ruoyi-ui/src/views/login.vue
+    - ruoyi-ui/src/views/register.vue
+    - ruoyi-ui/src/views/index.vue
+    - ruoyi-ui/src/views/redirect.vue
+source_files: []
+depends_on: []
+related_to:
+    - path: ruoyi_ui/app_shell

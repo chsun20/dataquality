@@ -62,6 +62,13 @@ public class Rule extends BaseEntity
     @Excel(name = "规则类型代码")
     private String typeCode;
 
+    /** 规则模板编码，多个模板组合时为 mixed */
+    @Excel(name = "规则模板")
+    private String templateCode;
+
+    /** 模板与参数配置（JSON），用于编辑回显 */
+    private String templateParams;
+
     /** 分区开始时间 */
     @Excel(name = "分区开始时间")
     private String sourceWhere;

@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: ruoyi_gateway
+title: 若依微服务网关（Spring Cloud Gateway）
+scope:
+    - ruoyi-gateway/
+source_files: []
+depends_on: []
+related_to:
+    - path: docker_infra

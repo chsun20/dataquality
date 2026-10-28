@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.dqservice.mapper.ExecutionViolationMapper">
+
+    <resultMap type="ExecutionViolation" id="ExecutionViolationResult">
+        <result property="violationId" column="violation_id" />
+        <result property="executionId" column="execution_id" />
+        <result property="rowId"       column="row_id"       />
+        <result property="recordId"    column="record_id"    />
+        <result property="fieldName"   column="field_name"   />
+        <result property="ruleName"    column="rule_name"    />
+        <result property="fieldValue"  column="field_value"  />
+    </resultMap>
+
+    <select id="selectViolationByExecutionId" parameterType="Long" resultMap="ExecutionViolationResult">
+        select violation_id, execution_id, row_id, record_id, field_name, rule_name, field_value
+        from dq_violation
+        where execution_id = #{executionId}
+        order by violation_id
+    </select>
+
+    <insert id="insertViolationBatch" parameterType="java.util.List">
+        insert into dq_violation (execution_id, row_id, record_id, field_name, rule_name, field_value)
+        values
+        <foreach collection="list" item="item" separator=",">
+            (#{item.executionId}, #{item.rowId}, #{item.recordId}, #{item.fieldName}, #{item.ruleName}, #{item.fieldValue})
+        </foreach>
+    </insert>
+
+    <delete id="deleteViolationByExecutionIds" parameterType="String">
+        delete from dq_violation where execution_id in
+        <foreach item="executionId" collection="array" open="(" separator="," close=")">
+            #{executionId}
+        </foreach>
+    </delete>
+</mapper>

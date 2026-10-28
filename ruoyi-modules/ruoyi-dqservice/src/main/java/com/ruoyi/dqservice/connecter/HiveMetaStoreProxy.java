@@ -38,17 +38,18 @@ public class HiveMetaStoreProxy {
 
     @Bean
     public IMetaStoreClient initHiveMetastoreClient() {
-        HiveConf hiveConf = new HiveConf();
-        hiveConf.set("hive.metastore.local", "false");
-        hiveConf.setIntVar(HiveConf.ConfVars.METASTORETHRIFTCONNECTIONRETRIES,
-                3);
-        hiveConf.setVar(HiveConf.ConfVars.METASTOREURIS, uris);
-        hiveConf.setIntVar(HiveConf.ConfVars.HMSHANDLERATTEMPTS, attempts);
-        hiveConf.setVar(HiveConf.ConfVars.HMSHANDLERINTERVAL, interval);
         try {
+            HiveConf hiveConf = new HiveConf();
+            hiveConf.set("hive.metastore.local", "false");
+            hiveConf.setIntVar(HiveConf.ConfVars.METASTORETHRIFTCONNECTIONRETRIES,
+                    3);
+            hiveConf.setVar(HiveConf.ConfVars.METASTOREURIS, uris);
+            hiveConf.setIntVar(HiveConf.ConfVars.HMSHANDLERATTEMPTS, attempts);
+            hiveConf.setVar(HiveConf.ConfVars.HMSHANDLERINTERVAL, interval);
             client = HiveMetaStoreClient.newSynchronizedClient(new HiveMetaStoreClient(hiveConf));
-        } catch (Exception e) {
-            LOGGER.error("Failed to connect hive metastore. {}", e);
+        } catch (Throwable e) {
+            // Hive 环境不可用时（含 fat jar 下 HiveConf 静态初始化失败）不影响其他功能启动
+            LOGGER.error("Failed to connect hive metastore, hive features unavailable. {}", e.getMessage());
         }
         return client;
     }

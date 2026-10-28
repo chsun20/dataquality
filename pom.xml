@@ -260,6 +260,16 @@
     </dependencies>
 
     <build>
+        <!-- 锁定 Spring Boot 插件版本，避免 Maven 解析到要求 JDK 17+ 的新版本 -->
+        <pluginManagement>
+            <plugins>
+                <plugin>
+                    <groupId>org.springframework.boot</groupId>
+                    <artifactId>spring-boot-maven-plugin</artifactId>
+                    <version>${spring-boot.version}</version>
+                </plugin>
+            </plugins>
+        </pluginManagement>
         <plugins>
             <plugin>
                 <groupId>org.apache.maven.plugins</groupId>

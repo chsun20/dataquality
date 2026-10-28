@@ -1,5 +1,6 @@
 package com.ruoyi.dqservice.service.impl;
 
+import java.util.Date;
 import java.util.List;
 import com.ruoyi.common.core.utils.DateUtils;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -53,7 +54,9 @@ public class RuleServiceImpl implements IRuleService
     @Override
     public int insertRule(Rule rule)
     {
-        rule.setCreateTime(DateUtils.getNowDate());
+        Date now = DateUtils.getNowDate();
+        rule.setCreateTime(now);
+        rule.setUpdateTime(now);
         return ruleMapper.insertRule(rule);
     }
 

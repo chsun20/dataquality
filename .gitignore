@@ -41,6 +41,22 @@ nbdist/
 *.xml.versionsBackup
 *.swp
 
+### 本地运行产物 ###
+/logs/
+/.tmp/
+**/logs/
+*.log.*
+/docker/mysql/data/
+/docker/redis/data/
+
+### 本地证书与密钥 ###
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+
 !*/build/*.java
 !*/build/*.html
 !*/build/*.xml

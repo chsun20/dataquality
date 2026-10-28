@@ -1,0 +1,174 @@
+# 知识卡导出索引文件
+schema_version: 1
+locale: zh-CN
+branch: Q0DeR-MaG1C-BrAnCh-Fo2-NoN-GiT-Or-No-C0MmIt
+nodes_managed: true
+exported_at: "2026-10-28T08:30:26Z"
+modules:
+    "":
+        dir_name: RuoYi-Cloud 微服务聚合工程
+        title: RuoYi-Cloud 微服务聚合工程
+        scope:
+            - README.md
+            - .gitignore
+            - pom.xml
+            - LICENSE
+            - bank
+        source_files: []
+        children:
+            - bin_scripts
+            - docker_infra
+            - ruoyi_api
+            - ruoyi_auth
+            - ruoyi_common
+            - ruoyi_gateway
+            - ruoyi_modules
+            - ruoyi_ui
+            - ruoyi_visual_monitor
+            - sql_scripts
+        depends_on: []
+        related_to: []
+    bin_scripts:
+        dir_name: RuoYi 后端服务与前端开发启动脚本集
+        title: RuoYi 后端服务与前端开发启动脚本集
+        scope:
+            - bin/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: docker_infra
+    docker_infra:
+        dir_name: 若依微服务 Docker 部署编排
+        title: 若依微服务 Docker 部署编排
+        scope:
+            - docker/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: bin_scripts
+            - path: ruoyi_auth
+            - path: ruoyi_gateway
+            - path: ruoyi_visual_monitor
+            - path: sql_scripts
+    ruoyi_api:
+        dir_name: 系统服务 Feign 远程调用 API
+        title: 系统服务 Feign 远程调用 API
+        scope:
+            - ruoyi-api/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    ruoyi_auth:
+        dir_name: 认证授权中心（ruoyi-auth）
+        title: 认证授权中心（ruoyi-auth）
+        scope:
+            - ruoyi-auth/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: docker_infra
+            - path: ruoyi_modules
+            - path: ruoyi_ui
+    ruoyi_common:
+        dir_name: RuoYi 通用基础能力模块集
+        title: RuoYi 通用基础能力模块集
+        scope:
+            - ruoyi-common/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    ruoyi_gateway:
+        dir_name: 若依微服务网关（Spring Cloud Gateway）
+        title: 若依微服务网关（Spring Cloud Gateway）
+        scope:
+            - ruoyi-gateway/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: docker_infra
+    ruoyi_modules:
+        dir_name: RuoYi 业务子模块聚合（系统_代码生成_定时任务_文件服务_数据质量）
+        title: RuoYi 业务子模块聚合（系统/代码生成/定时任务/文件服务/数据质量）
+        scope:
+            - ruoyi-modules/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: ruoyi_auth
+    ruoyi_ui:
+        dir_name: RuoYi-UI 前端管理后台
+        title: RuoYi-UI 前端管理后台
+        scope:
+            - ruoyi-ui/
+        source_files: []
+        children:
+            - ruoyi_ui/app_shell
+            - ruoyi_ui/build_config
+            - ruoyi_ui/views_dashboard_auth
+        depends_on: []
+        related_to:
+            - path: ruoyi_auth
+    ruoyi_ui/app_shell:
+        dir_name: 应用启动与全局权限控制
+        title: 应用启动与全局权限控制
+        scope:
+            - ruoyi-ui/src/main.js
+            - ruoyi-ui/src/App.vue
+            - ruoyi-ui/src/permission.js
+            - ruoyi-ui/src/settings.js
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: ruoyi_ui/views_dashboard_auth
+    ruoyi_ui/build_config:
+        dir_name: RuoYi-UI 构建与开发环境配置
+        title: RuoYi-UI 构建与开发环境配置
+        scope:
+            - ruoyi-ui/vue.config.js
+            - ruoyi-ui/babel.config.js
+            - ruoyi-ui/package.json
+        source_files: []
+        children: []
+        depends_on: []
+        related_to: []
+    ruoyi_ui/views_dashboard_auth:
+        dir_name: 登录注册与首页入口视图
+        title: 登录注册与首页入口视图
+        scope:
+            - ruoyi-ui/src/views/login.vue
+            - ruoyi-ui/src/views/register.vue
+            - ruoyi-ui/src/views/index.vue
+            - ruoyi-ui/src/views/redirect.vue
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: ruoyi_ui/app_shell
+    ruoyi_visual_monitor:
+        dir_name: RuoYi 监控中心（Spring Boot Admin）
+        title: RuoYi 监控中心（Spring Boot Admin）
+        scope:
+            - ruoyi-visual/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: docker_infra
+    sql_scripts:
+        dir_name: 数据库初始化脚本集
+        title: 数据库初始化脚本集
+        scope:
+            - sql/
+        source_files: []
+        children: []
+        depends_on: []
+        related_to:
+            - path: docker_infra

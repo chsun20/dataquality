@@ -2,9 +2,8 @@ version : '3.8'
 services:
   ruoyi-nacos:
     container_name: ruoyi-nacos
-    image: nacos/nacos-server
-    build:
-      context: ./nacos
+    # 固定 2.0.4 版本：与项目 nacos-client 2.0.4 及 ry_config 库表结构完全匹配
+    image: nacos/nacos-server:v2.0.4
     environment:
       - MODE=standalone
     volumes:

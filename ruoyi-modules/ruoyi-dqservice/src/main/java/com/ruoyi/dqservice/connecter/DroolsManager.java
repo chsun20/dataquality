@@ -1,5 +1,6 @@
 package com.ruoyi.dqservice.connecter;
 
+import com.ruoyi.common.core.exception.ServiceException;
 import com.ruoyi.dqservice.domain.DroolsRule;
 import lombok.extern.slf4j.Slf4j;
 import org.kie.api.KieBase;
@@ -7,12 +8,16 @@ import org.kie.api.KieServices;
 import org.kie.api.builder.*;
 import org.kie.api.builder.model.KieBaseModel;
 import org.kie.api.builder.model.KieModuleModel;
+import org.kie.api.io.ResourceType;
 import org.kie.api.runtime.KieContainer;
 import org.kie.api.runtime.KieSession;
+import org.kie.internal.utils.KieHelper;
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.Collection;
 import java.util.List;
+import java.util.Map;
 
 @Component
 @Slf4j
@@ -126,6 +131,86 @@ public class DroolsManager {
         kieSession.fireAllRules();
         kieSession.dispose();
         return resultInfo.toString();
+    }
+
+    /**
+     * 仅编译校验 DRL，不执行。供规则保存前的语法检查使用。
+     *
+     * @param drl 完整 DRL 文本
+     */
+    public void verifyDrl(String drl)
+    {
+        KieHelper kieHelper = new KieHelper();
+        kieHelper.addContent(drl, ResourceType.DRL);
+        Results results = kieHelper.verify();
+        List<Message> errors = results.getMessages(Message.Level.ERROR);
+        if (errors != null && !errors.isEmpty())
+        {
+            StringBuilder detail = new StringBuilder();
+            for (Message message : errors)
+            {
+                if (detail.length() > 0)
+                {
+                    detail.append("; ");
+                }
+                detail.append(message.getText());
+            }
+            log.error("规则编译失败: {}", detail);
+            throw new ServiceException("规则编译失败：" + detail);
+        }
+    }
+
+    /**
+     * 编译并执行一组 DRL，返回规则命中的违规明细。
+     *
+     * 与 fireRule 的区别：
+     * 1. 支持任意数量的 Map fact（每条数据库记录一个 Map），而非单个 Integer；
+     * 2. 每次调用用独立的 KieHelper 编译，不写入全局 KieFileSystem，
+     *    因此单条规则语法错误不会影响其它规则，规则修改也能立即生效；
+     * 3. 通过 global 集合 violations 回收 then 块产出的违规详情。
+     *
+     * @param drl   待执行的 DRL 文本
+     * @param facts 数据记录，字段名 -> 字段值
+     * @return 违规明细列表，每项包含 rule / field / rowId
+     */
+    public List<Map<String, Object>> fireRules(String drl, Collection<Map<String, Object>> facts) {
+        KieHelper kieHelper = new KieHelper();
+        kieHelper.addContent(drl, ResourceType.DRL);
+
+        Results results = kieHelper.verify();
+        List<Message> errors = results.getMessages(Message.Level.ERROR);
+        if (errors != null && !errors.isEmpty()) {
+            StringBuilder detail = new StringBuilder();
+            for (Message message : errors) {
+                detail.append(message.getText()).append("; ");
+            }
+            log.error("规则编译失败: {}", detail);
+            throw new ServiceException("规则编译失败: " + detail);
+        }
+
+        KieSession kieSession = null;
+        try {
+            kieSession = kieHelper.build().newKieSession();
+            List<Map<String, Object>> violations = new ArrayList<>();
+            try
+            {
+                kieSession.setGlobal("violations", violations);
+            }
+            catch (RuntimeException e)
+            {
+                // 手写 DRL 没有声明 global 时给出可读提示，而不是抛裸异常
+                throw new ServiceException("规则未声明 global java.util.List violations，无法收集违规结果");
+            }
+            for (Map<String, Object> fact : facts) {
+                kieSession.insert(fact);
+            }
+            kieSession.fireAllRules();
+            return violations;
+        } finally {
+            if (kieSession != null) {
+                kieSession.dispose();
+            }
+        }
     }
 
 }

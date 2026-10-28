@@ -1,0 +1,12 @@
+schema_version: 1
+module_path: ruoyi_ui/app_shell
+title: 应用启动与全局权限控制
+scope:
+    - ruoyi-ui/src/main.js
+    - ruoyi-ui/src/App.vue
+    - ruoyi-ui/src/permission.js
+    - ruoyi-ui/src/settings.js
+source_files: []
+depends_on: []
+related_to:
+    - path: ruoyi_ui/views_dashboard_auth

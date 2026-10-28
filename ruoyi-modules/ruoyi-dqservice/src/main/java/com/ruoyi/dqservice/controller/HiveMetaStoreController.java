@@ -18,7 +18,7 @@ import org.springframework.web.bind.annotation.RestController;
 public class HiveMetaStoreController {
 
     @Autowired
-    @Qualifier(value = "metastoreSvc")
+    @Qualifier(value = "mysqlMetaStore")
     private HiveMetaStoreService hiveMetaStoreService;
 
     @RequestMapping(value = "/dbs", method = RequestMethod.GET)

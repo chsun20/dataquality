@@ -1,0 +1,79 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.dqservice.mapper.ExecutionRecordMapper">
+
+    <resultMap type="ExecutionRecord" id="ExecutionRecordResult">
+        <result property="executionId"    column="execution_id"    />
+        <result property="ruleId"         column="rule_id"         />
+        <result property="ruleName"       column="rule_name"       />
+        <result property="dbName"         column="db_name"         />
+        <result property="tableName"      column="table_name"      />
+        <result property="totalRows"      column="total_rows"      />
+        <result property="violationCount" column="violation_count" />
+        <result property="violationRows"  column="violation_rows"  />
+        <result property="passRate"       column="pass_rate"       />
+        <result property="costMs"         column="cost_ms"         />
+        <result property="createBy"       column="create_by"       />
+        <result property="createTime"     column="create_time"     />
+    </resultMap>
+
+    <sql id="selectExecutionVo">
+        select execution_id, rule_id, rule_name, db_name, table_name, total_rows,
+               violation_count, violation_rows, pass_rate, cost_ms, create_by, create_time
+        from dq_execution
+    </sql>
+
+    <select id="selectExecutionRecordList" parameterType="ExecutionRecord" resultMap="ExecutionRecordResult">
+        <include refid="selectExecutionVo"/>
+        <where>
+            <if test="ruleId != null">and rule_id = #{ruleId}</if>
+            <if test="ruleName != null and ruleName != ''">and rule_name like concat('%', #{ruleName}, '%')</if>
+            <if test="tableName != null and tableName != ''">and table_name like concat('%', #{tableName}, '%')</if>
+        </where>
+        order by execution_id desc
+    </select>
+
+    <select id="selectExecutionRecordById" parameterType="Long" resultMap="ExecutionRecordResult">
+        <include refid="selectExecutionVo"/>
+        where execution_id = #{executionId}
+    </select>
+
+    <insert id="insertExecutionRecord" parameterType="ExecutionRecord" useGeneratedKeys="true" keyProperty="executionId">
+        insert into dq_execution
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            <if test="ruleId != null">rule_id,</if>
+            <if test="ruleName != null">rule_name,</if>
+            <if test="dbName != null">db_name,</if>
+            <if test="tableName != null">table_name,</if>
+            <if test="totalRows != null">total_rows,</if>
+            <if test="violationCount != null">violation_count,</if>
+            <if test="violationRows != null">violation_rows,</if>
+            <if test="passRate != null">pass_rate,</if>
+            <if test="costMs != null">cost_ms,</if>
+            <if test="createBy != null">create_by,</if>
+            <if test="createTime != null">create_time,</if>
+        </trim>
+        <trim prefix="values (" suffix=")" suffixOverrides=",">
+            <if test="ruleId != null">#{ruleId},</if>
+            <if test="ruleName != null">#{ruleName},</if>
+            <if test="dbName != null">#{dbName},</if>
+            <if test="tableName != null">#{tableName},</if>
+            <if test="totalRows != null">#{totalRows},</if>
+            <if test="violationCount != null">#{violationCount},</if>
+            <if test="violationRows != null">#{violationRows},</if>
+            <if test="passRate != null">#{passRate},</if>
+            <if test="costMs != null">#{costMs},</if>
+            <if test="createBy != null">#{createBy},</if>
+            <if test="createTime != null">#{createTime},</if>
+        </trim>
+    </insert>
+
+    <delete id="deleteExecutionRecordByIds" parameterType="String">
+        delete from dq_execution where execution_id in
+        <foreach item="executionId" collection="array" open="(" separator="," close=")">
+            #{executionId}
+        </foreach>
+    </delete>
+</mapper>
