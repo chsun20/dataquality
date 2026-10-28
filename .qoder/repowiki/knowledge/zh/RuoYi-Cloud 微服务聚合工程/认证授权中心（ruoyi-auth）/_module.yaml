@@ -1,0 +1,11 @@
+schema_version: 1
+module_path: ruoyi_auth
+title: 认证授权中心（ruoyi-auth）
+scope:
+    - ruoyi-auth/
+source_files: []
+depends_on: []
+related_to:
+    - path: docker_infra
+    - path: ruoyi_modules
+    - path: ruoyi_ui

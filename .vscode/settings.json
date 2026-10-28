@@ -1,0 +1,19 @@
+{
+  "java.jdt.ls.java.home": "C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.20.101-hotspot",
+  "java.configuration.runtimes": [
+    {
+      "name": "JavaSE-1.8",
+      "path": "C:\\Program Files\\Eclipse Adoptium\\jdk-8.0.504.1-hotspot",
+      "default": true
+    },
+    {
+      "name": "JavaSE-17",
+      "path": "C:\\Program Files\\Eclipse Adoptium\\jdk-17.0.20.101-hotspot"
+    }
+  ],
+  "java.import.maven.enabled": true,
+  "java.jdt.ls.vmargs": "-XX:+UseParallelGC -XX:GCTimeRatio=4 -XX:AdaptiveSizePolicyWeight=90 -Dsun.zip.disableMemoryMapping=true -Xmx4G -Xms100m -Xlog:disable",
+  "java.compile.nullAnalysis.mode": "automatic",
+  // bin 下的 .bat 以 GBK 保存（cmd 默认代码页），开启自动识别避免在编辑器里显示乱码
+  "files.autoGuessEncoding": true
+}

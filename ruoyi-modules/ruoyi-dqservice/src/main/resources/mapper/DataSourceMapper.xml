@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+        PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.dqservice.mapper.DataSourceMapper">
+
+    <resultMap type="DataSource" id="DataSourceResult">
+        <result property="id"    column="id"    />
+        <result property="name"    column="name"    />
+        <result property="type"    column="type"    />
+        <result property="description"    column="description"    />
+        <result property="creatTime"    column="creat_time"    />
+        <result property="updateTime"    column="update_time"    />
+        <result property="del"    column="del"    />
+    </resultMap>
+
+    <sql id="selectDataSourceVo">
+        select id, name, type, description, creat_time, update_time, del from data_source
+    </sql>
+
+    <select id="selectDataSourceList" parameterType="DataSource" resultMap="DataSourceResult">
+        <include refid="selectDataSourceVo"/>
+        <where>
+            <if test="name != null  and name != ''"> and name like concat('%', #{name}, '%')</if>
+            <if test="type != null  and type != ''"> and type = #{type}</if>
+            <if test="description != null  and description != ''"> and description = #{description}</if>
+            <if test="creatTime != null "> and creat_time = #{creatTime}</if>
+        </where>
+    </select>
+
+    <select id="selectDataSourceById" parameterType="Integer" resultMap="DataSourceResult">
+        <include refid="selectDataSourceVo"/>
+        where id = #{id}
+    </select>
+
+    <insert id="insertDataSource" parameterType="DataSource">
+        insert into data_source
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            <if test="id != null">id,</if>
+            <if test="name != null">name,</if>
+            <if test="type != null">type,</if>
+            <if test="description != null">description,</if>
+            <if test="creatTime != null">creat_time,</if>
+            <if test="updateTime != null">update_time,</if>
+            <if test="del != null">del,</if>
+        </trim>
+        <trim prefix="values (" suffix=")" suffixOverrides=",">
+            <if test="id != null">#{id},</if>
+            <if test="name != null">#{name},</if>
+            <if test="type != null">#{type},</if>
+            <if test="description != null">#{description},</if>
+            <if test="creatTime != null">#{creatTime},</if>
+            <if test="updateTime != null">#{updateTime},</if>
+            <if test="del != null">#{del},</if>
+        </trim>
+    </insert>
+
+    <update id="updateDataSource" parameterType="DataSource">
+        update data_source
+        <trim prefix="SET" suffixOverrides=",">
+            <if test="name != null">name = #{name},</if>
+            <if test="type != null">type = #{type},</if>
+            <if test="description != null">description = #{description},</if>
+            <if test="creatTime != null">creat_time = #{creatTime},</if>
+            <if test="updateTime != null">update_time = #{updateTime},</if>
+            <if test="del != null">del = #{del},</if>
+        </trim>
+        where id = #{id}
+    </update>
+
+    <delete id="deleteDataSourceById" parameterType="Integer">
+        delete from data_source where id = #{id}
+    </delete>
+
+    <delete id="deleteDataSourceByIds" parameterType="String">
+        delete from data_source where id in
+        <foreach item="id" collection="array" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </delete>
+</mapper>

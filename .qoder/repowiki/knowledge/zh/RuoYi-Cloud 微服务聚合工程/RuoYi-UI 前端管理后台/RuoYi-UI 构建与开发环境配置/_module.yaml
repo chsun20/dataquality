@@ -1,0 +1,10 @@
+schema_version: 1
+module_path: ruoyi_ui/build_config
+title: RuoYi-UI 构建与开发环境配置
+scope:
+    - ruoyi-ui/vue.config.js
+    - ruoyi-ui/babel.config.js
+    - ruoyi-ui/package.json
+source_files: []
+depends_on: []
+related_to: []

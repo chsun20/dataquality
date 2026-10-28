@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: ruoyi_ui
+title: RuoYi-UI 前端管理后台
+scope:
+    - ruoyi-ui/
+source_files: []
+depends_on: []
+related_to:
+    - path: ruoyi_auth

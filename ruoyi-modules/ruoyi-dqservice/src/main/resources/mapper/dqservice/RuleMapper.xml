@@ -1,0 +1,137 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.dqservice.mapper.RuleMapper">
+    
+    <resultMap type="Rule" id="RuleResult">
+        <result property="ruleId"    column="rule_id"    />
+        <result property="ruleName"    column="rule_name"    />
+        <result property="userId"    column="user_id"    />
+        <result property="userName"    column="user_name"    />
+        <result property="ruleContext"    column="rule_context"    />
+        <result property="dbName"    column="db_name"    />
+        <result property="tableName"    column="table_name"    />
+        <result property="columnName"    column="column_name"    />
+        <result property="typeName"    column="type_name"    />
+        <result property="typeCode"    column="type_code"    />
+        <result property="templateCode"    column="template_code"    />
+        <result property="templateParams"    column="template_params"    />
+        <result property="sourceWhere"    column="source_where"    />
+        <result property="sourcePartitionNumber"    column="source_partition_number"    />
+        <result property="sourcePartitionUnit"    column="source_partition_unit"    />
+        <result property="sourceTimeZone"    column="source_time_zone"    />
+        <result property="createTime"    column="create_time"    />
+        <result property="updateTime"    column="update_time"    />
+        <result property="del"    column="del"    />
+    </resultMap>
+
+    <sql id="selectRuleVo">
+        select rule_id, rule_name, user_id, user_name, rule_context, db_name, table_name, column_name, type_name, type_code, template_code, template_params, source_where, source_partition_number, source_partition_unit, source_time_zone, create_time, update_time, del from rule
+    </sql>
+
+    <select id="selectRuleList" parameterType="Rule" resultMap="RuleResult">
+        <include refid="selectRuleVo"/>
+        <where>  
+            <if test="ruleName != null  and ruleName != ''"> and rule_name like concat('%', #{ruleName}, '%')</if>
+            <if test="userId != null "> and user_id = #{userId}</if>
+            <if test="userName != null  and userName != ''"> and user_name like concat('%', #{userName}, '%')</if>
+            <if test="ruleContext != null  and ruleContext != ''"> and rule_context = #{ruleContext}</if>
+            <if test="dbName != null  and dbName != ''"> and db_name like concat('%', #{dbName}, '%')</if>
+            <if test="tableName != null  and tableName != ''"> and table_name like concat('%', #{tableName}, '%')</if>
+            <if test="columnName != null  and columnName != ''"> and column_name like concat('%', #{columnName}, '%')</if>
+            <if test="typeName != null  and typeName != ''"> and type_name like concat('%', #{typeName}, '%')</if>
+            <if test="typeCode != null  and typeCode != ''"> and type_code = #{typeCode}</if>
+            <if test="sourceWhere != null  and sourceWhere != ''"> and source_where = #{sourceWhere}</if>
+            <if test="sourcePartitionNumber != null "> and source_partition_number = #{sourcePartitionNumber}</if>
+            <if test="sourcePartitionUnit != null  and sourcePartitionUnit != ''"> and source_partition_unit = #{sourcePartitionUnit}</if>
+            <if test="sourceTimeZone != null  and sourceTimeZone != ''"> and source_time_zone = #{sourceTimeZone}</if>
+            <if test="del != null "> and del = #{del}</if>
+        </where>
+    </select>
+    
+    <select id="selectRuleByRuleId" parameterType="Long" resultMap="RuleResult">
+        <include refid="selectRuleVo"/>
+        where rule_id = #{ruleId}
+    </select>
+        
+    <insert id="insertRule" parameterType="Rule" useGeneratedKeys="true" keyProperty="ruleId">
+        insert into rule
+        <trim prefix="(" suffix=")" suffixOverrides=",">
+            <if test="ruleName != null">rule_name,</if>
+            <if test="userId != null">user_id,</if>
+            <if test="userName != null">user_name,</if>
+            <if test="ruleContext != null">rule_context,</if>
+            <if test="dbName != null">db_name,</if>
+            <if test="tableName != null">table_name,</if>
+            <if test="columnName != null">column_name,</if>
+            <if test="typeName != null">type_name,</if>
+            <if test="typeCode != null">type_code,</if>
+            <if test="templateCode != null">template_code,</if>
+            <if test="templateParams != null">template_params,</if>
+            <if test="sourceWhere != null">source_where,</if>
+            <if test="sourcePartitionNumber != null">source_partition_number,</if>
+            <if test="sourcePartitionUnit != null">source_partition_unit,</if>
+            <if test="sourceTimeZone != null">source_time_zone,</if>
+            <if test="createTime != null">create_time,</if>
+            <if test="updateTime != null">update_time,</if>
+            <if test="del != null">del,</if>
+         </trim>
+        <trim prefix="values (" suffix=")" suffixOverrides=",">
+            <if test="ruleName != null">#{ruleName},</if>
+            <if test="userId != null">#{userId},</if>
+            <if test="userName != null">#{userName},</if>
+            <if test="ruleContext != null">#{ruleContext},</if>
+            <if test="dbName != null">#{dbName},</if>
+            <if test="tableName != null">#{tableName},</if>
+            <if test="columnName != null">#{columnName},</if>
+            <if test="typeName != null">#{typeName},</if>
+            <if test="typeCode != null">#{typeCode},</if>
+            <if test="templateCode != null">#{templateCode},</if>
+            <if test="templateParams != null">#{templateParams},</if>
+            <if test="sourceWhere != null">#{sourceWhere},</if>
+            <if test="sourcePartitionNumber != null">#{sourcePartitionNumber},</if>
+            <if test="sourcePartitionUnit != null">#{sourcePartitionUnit},</if>
+            <if test="sourceTimeZone != null">#{sourceTimeZone},</if>
+            <if test="createTime != null">#{createTime},</if>
+            <if test="updateTime != null">#{updateTime},</if>
+            <if test="del != null">#{del},</if>
+         </trim>
+    </insert>
+
+    <update id="updateRule" parameterType="Rule">
+        update rule
+        <trim prefix="SET" suffixOverrides=",">
+            <if test="ruleName != null">rule_name = #{ruleName},</if>
+            <if test="userId != null">user_id = #{userId},</if>
+            <if test="userName != null">user_name = #{userName},</if>
+            <if test="ruleContext != null">rule_context = #{ruleContext},</if>
+            <if test="dbName != null">db_name = #{dbName},</if>
+            <if test="tableName != null">table_name = #{tableName},</if>
+            <if test="columnName != null">column_name = #{columnName},</if>
+            <if test="typeName != null">type_name = #{typeName},</if>
+            <if test="typeCode != null">type_code = #{typeCode},</if>
+            <if test="templateCode != null">template_code = #{templateCode},</if>
+            <if test="templateParams != null">template_params = #{templateParams},</if>
+            <if test="sourceWhere != null">source_where = #{sourceWhere},</if>
+            <if test="sourcePartitionNumber != null">source_partition_number = #{sourcePartitionNumber},</if>
+            <if test="sourcePartitionUnit != null">source_partition_unit = #{sourcePartitionUnit},</if>
+            <if test="sourceTimeZone != null">source_time_zone = #{sourceTimeZone},</if>
+            <if test="createTime != null">create_time = #{createTime},</if>
+            <if test="updateTime != null">update_time = #{updateTime},</if>
+            <if test="del != null">del = #{del},</if>
+        </trim>
+        where rule_id = #{ruleId}
+    </update>
+
+    <delete id="deleteRuleByRuleId" parameterType="Long">
+        delete from rule where rule_id = #{ruleId}
+    </delete>
+
+    <delete id="deleteRuleByRuleIds" parameterType="String">
+        delete from rule where rule_id in 
+        <foreach item="ruleId" collection="array" open="(" separator="," close=")">
+            #{ruleId}
+        </foreach>
+    </delete>
+</mapper>

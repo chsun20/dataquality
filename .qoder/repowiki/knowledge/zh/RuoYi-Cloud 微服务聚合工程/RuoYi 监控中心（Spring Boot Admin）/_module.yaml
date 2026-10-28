@@ -1,0 +1,9 @@
+schema_version: 1
+module_path: ruoyi_visual_monitor
+title: RuoYi 监控中心（Spring Boot Admin）
+scope:
+    - ruoyi-visual/
+source_files: []
+depends_on: []
+related_to:
+    - path: docker_infra
