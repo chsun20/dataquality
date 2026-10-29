@@ -5,6 +5,7 @@ import com.ruoyi.dqservice.mapper.QualityTaskMapper;
 import com.ruoyi.dqservice.mapper.QualityTaskRunMapper;
 import com.ruoyi.dqservice.util.TaskCron;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.context.event.ApplicationReadyEvent;
 import org.springframework.context.event.EventListener;
 import org.springframework.scheduling.concurrent.ThreadPoolTaskScheduler;
@@ -22,6 +23,7 @@ import java.util.concurrent.ScheduledFuture;
  *
  * 调度状态以 dq_task 表为唯一事实源：启动时按表注册，任务增删改后立即重注册。
  * 当前按单实例运行；多实例部署时每个实例都会注册，需要在触发前增加分布式互斥。
+ * 多副本演示环境用 dq.task.scheduler.enabled=false 显式关闭，避免同一 Cron 被多次触发。
  *
  * @author ruoyi
  */
@@ -38,6 +40,10 @@ public class QualityTaskScheduler
     private final ThreadPoolTaskScheduler scheduler;
 
     private final Map<Long, ScheduledFuture<?>> futures = new ConcurrentHashMap<>();
+
+    /** 是否由本进程承担 Cron 调度，默认开启，未显式关闭时保持原有单实例行为 */
+    @Value("${dq.task.scheduler.enabled:true}")
+    private boolean schedulerEnabled = true;
 
     public QualityTaskScheduler(QualityTaskMapper taskMapper, QualityTaskRunMapper runMapper,
                                 QualityTaskRunner runner)
@@ -63,6 +69,11 @@ public class QualityTaskScheduler
     @EventListener(ApplicationReadyEvent.class)
     public void start()
     {
+        if (!schedulerEnabled)
+        {
+            log.warn("质控任务调度已由配置关闭：本实例不注册 Cron，只承接接口请求");
+            return;
+        }
         int interrupted = runMapper.failInterruptedRuns(new Date(),
                 "服务重启导致本轮中断；未完成的结果不视为有效评价");
         if (interrupted > 0)
@@ -79,6 +90,10 @@ public class QualityTaskScheduler
     /** 任务新增、修改、启停或删除后重新注册 */
     public synchronized void refresh(Long taskId)
     {
+        if (!schedulerEnabled)
+        {
+            return;
+        }
         unregister(taskId);
         QualityTask task = taskMapper.selectQualityTaskById(taskId);
         if (task != null && Boolean.TRUE.equals(task.getEnabled()))

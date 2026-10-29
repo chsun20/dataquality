@@ -1,0 +1,56 @@
+# 质控服务演示配置（dataId=ruoyi-dqservice-cloud.yml）
+# 两个副本读取同一份配置、连同一平台库与 Redis，只在容器环境变量里区分实例标识
+spring:
+  autoconfigure:
+    exclude:
+      - com.alibaba.druid.spring.boot.autoconfigure.DruidDataSourceAutoConfigure
+      - io.seata.spring.boot.autoconfigure.SeataDataSourceAutoConfiguration
+      - io.seata.spring.boot.autoconfigure.SeataAutoConfiguration
+  redis:
+    host: platform-redis
+    port: 6379
+    password: ${DQ_REDIS_PASSWORD}
+  datasource:
+    druid:
+      stat-view-servlet:
+        enabled: false
+    dynamic:
+      druid:
+        initial-size: 5
+        min-idle: 5
+        maxActive: 20
+        maxWait: 60000
+        timeBetweenEvictionRunsMillis: 60000
+        minEvictableIdleTimeMillis: 300000
+        validationQuery: SELECT 1 FROM DUAL
+        testWhileIdle: true
+        testOnBorrow: false
+        testOnReturn: false
+        poolPreparedStatements: true
+        maxPoolPreparedStatementPerConnectionSize: 20
+        filters: stat,slf4j
+        connectionProperties: druid.stat.mergeSql\=true;druid.stat.slowSqlMillis\=5000
+      datasource:
+          # 副本共享平台库：规则、连接、报告只有一个事实源
+          master:
+            driver-class-name: com.mysql.cj.jdbc.Driver
+            url: "jdbc:mysql://platform-mysql:3306/ry-cloud?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=GMT%2B8"
+            username: ${DQ_DB_USER}
+            password: ${DQ_DB_PASSWORD}
+
+# mybatis配置
+mybatis:
+    typeAliasesPackage: com.ruoyi.dqservice.domain
+    mapperLocations: classpath:mapper/**/*.xml
+
+# 多副本演示：两个实例都不注册 Cron，避免同一任务被触发两次
+dq:
+  task:
+    scheduler:
+      enabled: false
+
+# swagger配置
+swagger:
+  title: 数据质量模块接口文档
+  license: Powered By ruoyi
+  licenseUrl: https://ruoyi.vip

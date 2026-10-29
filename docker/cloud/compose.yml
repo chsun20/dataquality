@@ -1,0 +1,337 @@
+# 质控系统独立演示环境（本机 Docker Compose 先行，后续可迁移到云服务器）
+#
+# 拓扑：浏览器 → 127.0.0.1:18080 → nginx → gateway → 2 个 dqservice 副本 → 平台 MySQL
+# 隔离：独立 Compose 项目名 dq-demo，独立容器名、网络、数据卷与端口，不触碰 docker/docker-compose.yml
+# 最小高可用只覆盖 dqservice 进程级故障；gateway、MySQL、Redis、Nacos 与宿主机仍是单点。
+name: dq-demo
+
+services:
+  platform-mysql:
+    image: mysql:5.7
+    container_name: dq-demo-platform-mysql
+    restart: unless-stopped
+    command:
+      - mysqld
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+8:00
+      - --lower-case-table-names=1
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DQ_DB_ROOT_PASSWORD:?platform mysql root password}
+      MYSQL_DATABASE: ry-cloud
+      MYSQL_USER: ${DQ_DB_USER:-ry}
+      MYSQL_PASSWORD: ${DQ_DB_PASSWORD:?platform mysql app password}
+    volumes:
+      - platform-mysql-data:/var/lib/mysql
+      # 版本化 SQL 由独立脚本按固定顺序导入，避免依赖文件名字典序
+      - ../../sql:/opt/sql:ro
+      - ./mysql-init:/docker-entrypoint-initdb.d:ro
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    logging: &default-logging
+      driver: json-file
+      options:
+        max-size: 10m
+        max-file: "3"
+
+  platform-redis:
+    image: redis:7-alpine
+    container_name: dq-demo-platform-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--requirepass", "${DQ_REDIS_PASSWORD:?redis password}"]
+    environment:
+      REDIS_PASSWORD: ${DQ_REDIS_PASSWORD}
+    volumes:
+      - platform-redis-data:/data
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "redis-cli --no-auth-warning -a \"$$REDIS_PASSWORD\" ping | grep -q PONG"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+    logging: *default-logging
+
+  platform-nacos:
+    image: nacos/nacos-server:v2.0.4
+    container_name: dq-demo-platform-nacos
+    restart: unless-stopped
+    environment:
+      - MODE=standalone
+      - JVM_XMS=256m
+      - JVM_XMX=512m
+    volumes:
+      - platform-nacos-data:/home/nacos/data
+      - platform-nacos-logs:/home/nacos/logs
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8848/nacos/v1/console/health/readiness"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    logging: *default-logging
+
+  # 只负责把 cloud profile 配置发布到独立的 demo Nacos，发布成功即退出
+  config-publisher:
+    image: curlimages/curl:8.10.1
+    container_name: dq-demo-config-publisher
+    restart: "no"
+    environment:
+      NACOS_ADDR: platform-nacos:8848
+    volumes:
+      - ./config:/config:ro
+      - ./scripts:/scripts:ro
+    command: ["sh", "/scripts/publish-config.sh"]
+    depends_on:
+      platform-nacos:
+        condition: service_healthy
+    networks:
+      - platform
+    logging: *default-logging
+
+  gateway:
+    image: dq-demo-java:local
+    build:
+      context: .
+      dockerfile: Dockerfile.java
+    container_name: dq-demo-gateway
+    restart: unless-stopped
+    environment:
+      APP_JAR: ruoyi-gateway.jar
+      JAVA_OPTS: -Xms256m -Xmx512m -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai
+      SPRING_PROFILES_ACTIVE: cloud
+      SPRING_CLOUD_NACOS_DISCOVERY_SERVER_ADDR: platform-nacos:8848
+      SPRING_CLOUD_NACOS_CONFIG_SERVER_ADDR: platform-nacos:8848
+      # bootstrap.yml 里 sentinel 数据源仍是 127.0.0.1:8848，这里改到容器网络
+      SPRING_CLOUD_SENTINEL_DATASOURCE_DS1_NACOS_SERVER_ADDR: platform-nacos:8848
+      # Nacos 配置中的占位符在容器环境内解析，密码不落入任何配置文件
+      DQ_REDIS_PASSWORD: ${DQ_REDIS_PASSWORD}
+      DQ_DB_USER: ${DQ_DB_USER:-ry}
+      DQ_DB_PASSWORD: ${DQ_DB_PASSWORD}
+    depends_on:
+      platform-nacos:
+        condition: service_healthy
+      platform-redis:
+        condition: service_healthy
+      config-publisher:
+        condition: service_completed_successfully
+    networks:
+      - platform
+    healthcheck: &java-healthcheck-gateway
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/8089"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    logging: *default-logging
+
+  auth:
+    image: dq-demo-java:local
+    container_name: dq-demo-auth
+    restart: unless-stopped
+    environment:
+      APP_JAR: ruoyi-auth.jar
+      JAVA_OPTS: -Xms256m -Xmx512m -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai
+      SPRING_PROFILES_ACTIVE: cloud
+      SPRING_CLOUD_NACOS_DISCOVERY_SERVER_ADDR: platform-nacos:8848
+      SPRING_CLOUD_NACOS_CONFIG_SERVER_ADDR: platform-nacos:8848
+      DQ_REDIS_PASSWORD: ${DQ_REDIS_PASSWORD}
+      DQ_DB_USER: ${DQ_DB_USER:-ry}
+      DQ_DB_PASSWORD: ${DQ_DB_PASSWORD}
+    depends_on:
+      platform-nacos:
+        condition: service_healthy
+      platform-redis:
+        condition: service_healthy
+      config-publisher:
+        condition: service_completed_successfully
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9200"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    logging: *default-logging
+
+  system:
+    image: dq-demo-java:local
+    container_name: dq-demo-system
+    restart: unless-stopped
+    environment:
+      APP_JAR: ruoyi-modules-system.jar
+      JAVA_OPTS: -Xms256m -Xmx512m -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai
+      SPRING_PROFILES_ACTIVE: cloud
+      SPRING_CLOUD_NACOS_DISCOVERY_SERVER_ADDR: platform-nacos:8848
+      SPRING_CLOUD_NACOS_CONFIG_SERVER_ADDR: platform-nacos:8848
+      DQ_REDIS_PASSWORD: ${DQ_REDIS_PASSWORD}
+      DQ_DB_USER: ${DQ_DB_USER:-ry}
+      DQ_DB_PASSWORD: ${DQ_DB_PASSWORD}
+    depends_on:
+      platform-nacos:
+        condition: service_healthy
+      platform-mysql:
+        condition: service_healthy
+      platform-redis:
+        condition: service_healthy
+      config-publisher:
+        condition: service_completed_successfully
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9201"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 40s
+    logging: *default-logging
+
+  # 两个 dqservice 副本：同一镜像、同一服务名 ruoyi-dqservice，由 Nacos 发现 + LoadBalancer 轮询
+  dqservice-a:
+    image: dq-demo-java:local
+    container_name: dq-demo-dqservice-a
+    restart: unless-stopped
+    environment: &dqservice-env
+      APP_JAR: ruoyi-dqservice.jar
+      JAVA_OPTS: -Xms512m -Xmx1024m -Dfile.encoding=UTF-8 -Duser.timezone=Asia/Shanghai
+      SPRING_PROFILES_ACTIVE: cloud
+      SPRING_CLOUD_NACOS_DISCOVERY_SERVER_ADDR: platform-nacos:8848
+      SPRING_CLOUD_NACOS_CONFIG_SERVER_ADDR: platform-nacos:8848
+      DQ_REDIS_PASSWORD: ${DQ_REDIS_PASSWORD}
+      DQ_DB_USER: ${DQ_DB_USER:-ry}
+      DQ_DB_PASSWORD: ${DQ_DB_PASSWORD}
+      # 外部演示库白名单只授权固定 IP + 端口，不使用 DISABLED 关闭 TLS
+      DQ_MYSQL_ALLOWED_TARGETS: 172.30.51.10:3306
+      DQ_SOURCE_AES_KEY: ${DQ_SOURCE_AES_KEY:?aes key for source credentials}
+      DQ_INSTANCE_ID: dq-a
+      # 双网卡（platform + source）下 Nacos 自动选本机 IP 不稳定，可能注册成 source 网段地址，
+      # gateway 无法路由导致请求超时；这里固定 platform 网段并显式声明注册地址。
+      SPRING_CLOUD_NACOS_DISCOVERY_IP: 172.31.60.11
+    depends_on:
+      platform-nacos:
+        condition: service_healthy
+      platform-mysql:
+        condition: service_healthy
+      platform-redis:
+        condition: service_healthy
+      config-publisher:
+        condition: service_completed_successfully
+    networks:
+      platform:
+        ipv4_address: 172.31.60.11
+      source:
+    healthcheck: &dqservice-healthcheck
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/9205"]
+      interval: 10s
+      timeout: 5s
+      retries: 40
+      start_period: 40s
+    logging: *default-logging
+
+  dqservice-b:
+    image: dq-demo-java:local
+    container_name: dq-demo-dqservice-b
+    restart: unless-stopped
+    environment:
+      <<: *dqservice-env
+      DQ_INSTANCE_ID: dq-b
+      SPRING_CLOUD_NACOS_DISCOVERY_IP: 172.31.60.12
+    depends_on:
+      platform-nacos:
+        condition: service_healthy
+      platform-mysql:
+        condition: service_healthy
+      platform-redis:
+        condition: service_healthy
+      config-publisher:
+        condition: service_completed_successfully
+    networks:
+      platform:
+        ipv4_address: 172.31.60.12
+      source:
+    healthcheck: *dqservice-healthcheck
+    logging: *default-logging
+
+  # 独立演示数据源：不预置历史报告，表与只读账号由初始化脚本创建
+  source-mysql:
+    image: mysql:5.7
+    container_name: dq-demo-source-mysql
+    restart: unless-stopped
+    command:
+      - mysqld
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+      - --default-time-zone=+8:00
+    environment:
+      MYSQL_ROOT_PASSWORD: ${DQ_SRC_ROOT_PASSWORD:?source mysql root password}
+      MYSQL_DATABASE: dq_demo
+      DQ_READER_USER: ${DQ_SRC_READER_USER:-dq_reader}
+      DQ_READER_PASSWORD: ${DQ_SRC_READER_PASSWORD:?source mysql reader password}
+    volumes:
+      - source-mysql-data:/var/lib/mysql
+      - ./source-mysql-init:/docker-entrypoint-initdb.d:ro
+    networks:
+      source:
+        ipv4_address: 172.30.51.10
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p\"$$MYSQL_ROOT_PASSWORD\" --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 30s
+    logging: *default-logging
+
+  nginx:
+    image: dq-demo-web:local
+    build:
+      context: .
+      dockerfile: Dockerfile.nginx
+    container_name: dq-demo-nginx
+    restart: unless-stopped
+    ports:
+      # 只绑定回环地址：不向局域网或公网暴露任何业务端口
+      - "127.0.0.1:${DQ_HTTP_PORT:-18080}:80"
+    depends_on:
+      gateway:
+        condition: service_healthy
+    networks:
+      - platform
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q -O /dev/null http://127.0.0.1/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+    logging: *default-logging
+
+networks:
+  platform:
+    name: dq-demo-platform
+    ipam:
+      config:
+        - subnet: 172.31.60.0/24
+  source:
+    name: dq-demo-source
+    ipam:
+      config:
+        - subnet: 172.30.51.0/24
+
+volumes:
+  platform-mysql-data:
+    name: dq-demo-platform-mysql-data
+  platform-redis-data:
+    name: dq-demo-platform-redis-data
+  platform-nacos-data:
+    name: dq-demo-platform-nacos-data
+  platform-nacos-logs:
+    name: dq-demo-platform-nacos-logs
+  source-mysql-data:
+    name: dq-demo-source-mysql-data

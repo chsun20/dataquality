@@ -1,0 +1,11 @@
+[
+  {
+    "resource": "ruoyi-gateway",
+    "limitApp": "default",
+    "grade": 1,
+    "count": 1000,
+    "strategy": 0,
+    "controlBehavior": 0,
+    "clusterMode": false
+  }
+]

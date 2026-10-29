@@ -1,0 +1,39 @@
+# 系统服务演示配置（dataId=ruoyi-system-cloud.yml）
+spring:
+  redis:
+    host: platform-redis
+    port: 6379
+    password: ${DQ_REDIS_PASSWORD}
+  datasource:
+    druid:
+      # 演示环境不开放 Druid 监控页，维护检查在容器内完成
+      stat-view-servlet:
+        enabled: false
+    dynamic:
+      druid:
+        initial-size: 5
+        min-idle: 5
+        maxActive: 20
+        maxWait: 60000
+        timeBetweenEvictionRunsMillis: 60000
+        minEvictableIdleTimeMillis: 300000
+        validationQuery: SELECT 1 FROM DUAL
+        testWhileIdle: true
+        testOnBorrow: false
+        testOnReturn: false
+        poolPreparedStatements: true
+        maxPoolPreparedStatementPerConnectionSize: 20
+        filters: stat,slf4j
+        connectionProperties: druid.stat.mergeSql\=true;druid.stat.slowSqlMillis\=5000
+      datasource:
+          # 演示环境平台库
+          master:
+            driver-class-name: com.mysql.cj.jdbc.Driver
+            url: "jdbc:mysql://platform-mysql:3306/ry-cloud?useUnicode=true&characterEncoding=utf8&zeroDateTimeBehavior=convertToNull&useSSL=false&serverTimezone=GMT%2B8"
+            username: ${DQ_DB_USER}
+            password: ${DQ_DB_PASSWORD}
+
+# mybatis配置
+mybatis:
+    typeAliasesPackage: com.ruoyi.system
+    mapperLocations: classpath:mapper/**/*.xml

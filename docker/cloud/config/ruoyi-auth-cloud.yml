@@ -1,0 +1,7 @@
+# 认证服务演示配置（dataId=ruoyi-auth-cloud.yml）
+# 登录态与验证码都放 Redis，两个 dqservice 副本共享同一 Redis
+spring:
+  redis:
+    host: platform-redis
+    port: 6379
+    password: ${DQ_REDIS_PASSWORD}

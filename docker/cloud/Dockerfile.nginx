@@ -1,0 +1,7 @@
+# 固定 nginx 主版本；只替换默认站点配置与已构建的前端静态文件
+FROM nginx:1.27-alpine
+
+COPY nginx/default.conf /etc/nginx/conf.d/default.conf
+COPY build/web/ /usr/share/nginx/html/
+
+EXPOSE 80
