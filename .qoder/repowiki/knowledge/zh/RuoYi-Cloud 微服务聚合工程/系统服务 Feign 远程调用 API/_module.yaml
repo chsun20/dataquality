@@ -1,8 +1,0 @@
-schema_version: 1
-module_path: ruoyi_api
-title: 系统服务 Feign 远程调用 API
-scope:
-    - ruoyi-api/
-source_files: []
-depends_on: []
-related_to: []

@@ -1,8 +1,0 @@
-schema_version: 1
-module_path: ruoyi_common
-title: RuoYi 通用基础能力模块集
-scope:
-    - ruoyi-common/
-source_files: []
-depends_on: []
-related_to: []

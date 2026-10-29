@@ -40,6 +40,26 @@ public class DataSource extends BaseEntity
     /** 删除位 */
     private Integer del;
 
+    @lombok.Getter @lombok.Setter
+    private String host;
+    @lombok.Getter @lombok.Setter
+    private Integer port;
+    @lombok.Getter @lombok.Setter
+    private String databaseName;
+    @lombok.Getter @lombok.Setter
+    private String username;
+    @com.fasterxml.jackson.annotation.JsonIgnore
+    @lombok.Getter @lombok.Setter
+    private String passwordCipher;
+    @lombok.Getter @lombok.Setter
+    private String tlsMode;
+    @lombok.Getter @lombok.Setter
+    private String timeZone;
+    @lombok.Getter @lombok.Setter
+    private Boolean enabled;
+    @lombok.Getter @lombok.Setter
+    private Integer configVersion;
+
     public void setId(Integer id)
     {
         this.id = id;

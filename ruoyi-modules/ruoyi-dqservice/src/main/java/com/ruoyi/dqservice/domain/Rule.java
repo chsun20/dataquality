@@ -10,6 +10,7 @@ import com.ruoyi.common.core.annotation.Excel;
 import com.ruoyi.common.core.web.domain.BaseEntity;
 
 import java.util.Objects;
+import java.util.List;
 
 /**
  * 规则对象 rule
@@ -46,6 +47,10 @@ public class Rule extends BaseEntity
     @Excel(name = "数据库名称")
     private String dbName;
 
+    /** null 表示内置本地连接，不与旧描述性数据源自动关联。 */
+    private Integer sourceId;
+    private String sourceName;
+
     /** 表名 */
     @Excel(name = "表名")
     private String tableName;
@@ -68,6 +73,9 @@ public class Rule extends BaseEntity
 
     /** 模板与参数配置（JSON），用于编辑回显 */
     private String templateParams;
+
+    /** 非表字段：根据模板配置计算的质量维度；自定义或无法识别时为空 */
+    private List<String> qualityDimensions;
 
     /** 分区开始时间 */
     @Excel(name = "分区开始时间")

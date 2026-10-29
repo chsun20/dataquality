@@ -24,17 +24,19 @@ public class RuleExecuteController extends BaseController
 {
     @Autowired
     private RuleExecuteService ruleExecuteService;
+    @Autowired private com.ruoyi.dqservice.service.IRuleService rules;
 
     /**
      * 执行指定规则，返回违规明细与通过率。
      * limit 可选，表示本次最多扫描的数据行数。
      */
-    @RequiresPermissions("dqservice:rule:list")
+    @RequiresPermissions("dqservice:rule:execute")
     @Log(title = "规则执行", businessType = BusinessType.OTHER)
     @PostMapping("/{ruleId}")
     public AjaxResult execute(@PathVariable("ruleId") Long ruleId,
                               @RequestParam(value = "limit", required = false) Integer limit)
     {
+        com.ruoyi.dqservice.source.RuleSourceAccess.execution(rules.selectRuleByRuleId(ruleId));
         return AjaxResult.success(ruleExecuteService.execute(ruleId, limit));
     }
 }

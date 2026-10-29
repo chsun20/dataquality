@@ -19,6 +19,10 @@ public interface DataSourceMapper
      */
     public DataSource selectDataSourceById(Integer id);
 
+    DataSource lockById(Integer id);
+
+    int countDependencies(Integer id);
+
     /**
      * 查询数据源列表
      *

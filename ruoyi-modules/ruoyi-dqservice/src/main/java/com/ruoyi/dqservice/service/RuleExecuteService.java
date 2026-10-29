@@ -3,26 +3,28 @@ package com.ruoyi.dqservice.service;
 import com.ruoyi.common.core.exception.ServiceException;
 import com.ruoyi.dqservice.connecter.DroolsManager;
 import com.ruoyi.dqservice.domain.Rule;
+import com.ruoyi.dqservice.domain.ExecutionRecord;
+import com.ruoyi.dqservice.source.*;
+import com.ruoyi.dqservice.template.*;
+import com.ruoyi.dqservice.util.QualityJson;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.sql.Timestamp;
+import java.util.Collections;
+import java.util.stream.Collectors;
 import com.ruoyi.dqservice.mapper.RuleMapper;
 import com.ruoyi.dqservice.util.RuleParser;
+import com.ruoyi.dqservice.util.QualityStatistics;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
-import java.sql.Connection;
-import java.sql.PreparedStatement;
-import java.sql.ResultSet;
-import java.sql.ResultSetMetaData;
-import java.sql.SQLException;
-import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.HashMap;
-import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.Set;
-import java.util.regex.Pattern;
+import java.util.Objects;
 
 /**
  * 规则执行服务
@@ -44,21 +46,17 @@ public class RuleExecuteService
     /** 单次执行扫描行数上限 */
     private static final int MAX_LIMIT = 10000;
 
-    /** 表名白名单：仅允许字母、数字、下划线，防止表名拼接造成 SQL 注入 */
-    private static final Pattern TABLE_NAME_PATTERN = Pattern.compile("[A-Za-z0-9_]+");
-
-    /** 库名白名单：允许字母、数字、下划线、连字符（如 ry-cloud） */
-    private static final Pattern DB_NAME_PATTERN = Pattern.compile("[A-Za-z0-9_\\-]+");
-
     @Autowired
     private RuleMapper ruleMapper;
 
     @Autowired
     private DroolsManager droolsManager;
 
-    /** 使用全限定名，避免与 com.ruoyi.dqservice.domain.DataSource 重名 */
-    @Autowired
-    private javax.sql.DataSource dataSource;
+    @Autowired private MysqlSourceClient mysql;
+    @Autowired private RuleConfigurationValidator validator;
+    @Autowired private RuleTemplateService templates;
+    @Autowired private RuleTemplateRegistry registry;
+    @Autowired private ReferenceLookupService references;
 
     @Autowired
     private ReportService reportService;
@@ -77,145 +75,123 @@ public class RuleExecuteService
         {
             throw new ServiceException("规则不存在：ruleId=" + ruleId);
         }
-        String tableName = rule.getTableName();
-        if (tableName == null || !TABLE_NAME_PATTERN.matcher(tableName).matches())
+        SourcePolicy.identifier(rule.getTableName());
+        if (rule.getDbName() != null && !rule.getDbName().trim().isEmpty()) SourcePolicy.identifier(rule.getDbName());
+        int maxRows = limit == null ? DEFAULT_LIMIT : limit;
+        if (maxRows < 1 || maxRows > MAX_LIMIT) throw new ServiceException("扫描上限必须为 1～10000");
+        List<TemplateCheck> checks = TemplateCheck.read(rule);
+        boolean external = !TemplateCheck.dependencies(rule).isEmpty();
+        boolean generated = !checks.isEmpty() && checks.stream().allMatch(c -> Objects.equals(2, c.getVersion()));
+        if (external && (!generated || RuleTemplateService.CUSTOM.equals(rule.getTemplateCode())))
+            throw new ServiceException("外部数据源只能执行通过参数向导保存的新版模板规则");
+        String drl = generated ? templates.executionDrl(rule, checks) : rule.getRuleContext();
+        if (drl == null || drl.trim().isEmpty()) throw new ServiceException("规则内容为空，无法执行");
+
+        long started = System.nanoTime();
+        Instant detectedAt = Instant.now();
+        ExecutionRecord record = new ExecutionRecord();
+        record.setRuleId(rule.getRuleId());
+        record.setRuleName(rule.getRuleName());
+        record.setDbName(rule.getDbName());
+        record.setTableName(rule.getTableName());
+        record.setSourceId(rule.getSourceId());
+        record.setSourceName(rule.getSourceId() == null ? "内置本地数据源" : rule.getSourceName());
+        record.setDetectedAt(detectedAt.toString());
+        record.setTotalRows(0);
+        record.setViolationRows(0);
+        record.setViolationCount(0);
+        Map<String, Object> snapshot = new LinkedHashMap<>();
+        snapshot.put("version", 2);
+        snapshot.put("checks", checks);
+        snapshot.put("limit", maxRows);
+        snapshot.put("referenceConsistency", "参考按需读取，不提供跨数据库一致性快照；演示数据不是权威依据");
+        List<Map<String, Object>> results = Collections.emptyList();
+        List<Map<String, Object>> violations = Collections.emptyList();
+        List<Map<String, Object>> unverifiable = Collections.emptyList();
+        String stage = "数据源连接或元数据复验";
+        // 参数与权限预校验已完成；此后所有运行失败均产生 FAILED 报告。
+        try (MysqlSourceClient.Session session = mysql.session(external))
         {
-            throw new ServiceException("规则未绑定合法的数据表：" + tableName);
+            SourceTable table = validator.validate(session, rule, checks, true);
+            record.setDbName(table.getDatabaseName());
+            record.setSourceName(rule.getSourceName());
+            snapshot.put("sourceConfigVersion", rule.getSourceId() == null ? null : session.config(rule.getSourceId()).getConfigVersion());
+            record.setScanNote(table.primaryKey().isEmpty()
+                    ? "仅检测本次最多 " + maxRows + " 行；无主键，扫描范围不可稳定复现；唯一性不代表全表"
+                    : "按主键 " + String.join("、", table.primaryKey()) + " 排序，最多 " + maxRows + " 行；唯一性仅对本次扫描有效");
+            stage = "源数据读取";
+            List<Map<String, Object>> rows = session.scan(rule.getSourceId(), table, maxRows);
+            record.setTotalRows(rows.size());
+            // 保留历史本地 DRL 的 JDBC Date 事实契约；新版时间模板使用显式时区解释 LocalDateTime。
+            if (!generated) for (Map<String, Object> row : rows)
+                row.replaceAll((key, value) -> value instanceof LocalDateTime ? Timestamp.valueOf((LocalDateTime) value) : value);
+            QualityExecutionContext context = new QualityExecutionContext(detectedAt, rows);
+            if (generated) for (TemplateCheck check : checks)
+                context.register(check.getCheckId(), check.getTemplate(), check.getField(), registry.get(check.getTemplate()).getQualityDimension().name());
+            stage = "参考数据准备";
+            snapshot.put("references", references.load(session, table, checks, rows, context));
+            session.checkBudget();
+            stage = "规则执行或结果校验";
+            results = droolsManager.fireRules(drl, rows, context);
+            // 对所有明细规范化行号，无法核验也必须指向真实源记录。
+            QualityStatistics.countViolationRows(results, rows.size());
+            fillRowDetail(results, rows);
+            violations = results.stream().filter(r -> !"UNVERIFIABLE".equals(r.get("resultType"))).collect(Collectors.toList());
+            unverifiable = results.stream().filter(r -> "UNVERIFIABLE".equals(r.get("resultType"))).collect(Collectors.toList());
+            if (generated) for (TemplateCheck check : checks)
+            {
+                RuleTemplate template = registry.get(check.getTemplate());
+                if (!(template instanceof ContextRuleTemplate)) context.countLegacyTemplate(check, template.getQualityDimension().name(), results);
+            }
+            record.setCheckCounts(generated ? QualityJson.write(context.getCounters()) : null);
+            record.setViolationCount(violations.size());
+            record.setViolationRows(QualityStatistics.countViolationRows(violations, rows.size()));
+            record.setUnverifiableCount(unverifiable.size());
+            record.setEvaluationStatus(rows.isEmpty() ? "NO_DATA" : unverifiable.isEmpty() ? "SUCCESS" : "PARTIAL");
+            record.setPassRate("SUCCESS".equals(record.getEvaluationStatus())
+                    ? QualityStatistics.passRate(rows.size(), record.getViolationRows()) : null);
         }
-        String drl = rule.getRuleContext();
-        if (drl == null || drl.trim().isEmpty())
+        catch (RuntimeException e)
         {
-            throw new ServiceException("规则内容为空，无法执行");
+            // 不能把驱动异常、任意 DRL 异常或半批结果写入报告/日志。
+            record.setEvaluationStatus("FAILED");
+            record.setErrorMessage(stage + "失败；请检查连接启用状态、网络与权限、字段结构及规则参数。未完成评价。");
+            record.setPassRate(null);
+            record.setViolationCount(0);
+            record.setViolationRows(0);
+            record.setUnverifiableCount(0);
+            record.setCheckCounts(null);
+            results = violations = unverifiable = Collections.emptyList();
+            log.warn("规则执行失败：ruleId={}，阶段={}", ruleId, stage);
         }
-
-        long startTime = System.currentTimeMillis();
-        int maxRows = (limit == null || limit <= 0) ? DEFAULT_LIMIT : Math.min(limit, MAX_LIMIT);
-        RowQuery query = queryRows(rule.getDbName(), tableName, maxRows);
-        List<Map<String, Object>> rows = query.rows;
-        List<Map<String, Object>> violations = droolsManager.fireRules(drl, rows);
-        fillRowDetail(violations, rows);
-
-        int violationRows = countViolationRows(violations);
-        double rate = passRate(rows.size(), violationRows);
-        long costMs = System.currentTimeMillis() - startTime;
-        Long executionId = reportService.saveExecution(rule, tableName, rows.size(),
-                violationRows, rate, costMs, violations);
-        log.info("规则[{}]执行完成：库[{}]表[{}]扫描{}行，违规{}条，命中{}行，耗时{}ms，批次{}",
-                rule.getRuleName(), query.dbName, tableName, rows.size(), violations.size(), violationRows, costMs, executionId);
-
+        record.setCostMs(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
+        record.setConfigSnapshot(QualityJson.write(snapshot));
+        // 持久化失败单独向上传递，不得把未保存的报告包装为成功。
+        Long executionId = reportService.saveEvaluation(record, results);
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("executionId", executionId);
-        result.put("ruleId", rule.getRuleId());
-        result.put("ruleName", rule.getRuleName());
-        result.put("dbName", query.dbName);
-        result.put("tableName", tableName);
-        result.put("totalRows", rows.size());
-        result.put("violationCount", violations.size());
-        result.put("violationRows", violationRows);
-        result.put("passRate", rate);
-        result.put("costMs", costMs);
+        result.put("ruleId", record.getRuleId());
+        result.put("ruleName", record.getRuleName());
+        result.put("dbName", record.getDbName());
+        result.put("tableName", record.getTableName());
+        result.put("sourceId", record.getSourceId());
+        result.put("sourceName", record.getSourceName());
+        result.put("totalRows", record.getTotalRows());
+        result.put("violationCount", record.getViolationCount());
+        result.put("violationRows", record.getViolationRows());
+        result.put("unverifiableCount", record.getUnverifiableCount());
+        result.put("passRate", record.getPassRate());
+        result.put("costMs", record.getCostMs());
+        result.put("evaluationStatus", record.getEvaluationStatus());
+        result.put("errorMessage", record.getErrorMessage());
+        result.put("detectedAt", record.getDetectedAt());
+        result.put("scanNote", record.getScanNote());
+        result.put("configSnapshot", record.getConfigSnapshot());
+        result.put("checkCounts", record.getCheckCounts());
         result.put("fieldStats", fieldStats(violations));
         result.put("violations", violations);
+        result.put("unverifiable", unverifiable);
         return result;
-    }
-
-    /**
-     * 读取数据表，每行一条 Map 记录，并写入行号占位字段供 DRL 回填违规明细。
-     * 库名/表名均经过白名单校验，limit 为 int，此处字符串拼接不存在注入风险。
-     *
-     * @param dbName    规则绑定的库名，为空或不存在时回退到数据源默认库
-     * @param tableName 数据表名
-     * @param limit     本次最多扫描的行数
-     */
-    private RowQuery queryRows(String dbName, String tableName, int limit)
-    {
-        List<Map<String, Object>> rows = new ArrayList<>();
-        String usedDbName;
-        try (Connection connection = dataSource.getConnection())
-        {
-            usedDbName = resolveDbName(connection, dbName);
-            String table = (usedDbName == null ? "" : "`" + usedDbName + "`.") + "`" + tableName + "`";
-            String sql = "select * from " + table + " limit " + limit;
-            try (Statement statement = connection.createStatement();
-                 ResultSet rs = statement.executeQuery(sql))
-            {
-                ResultSetMetaData meta = rs.getMetaData();
-                int columnCount = meta.getColumnCount();
-                int rowNo = 0;
-                while (rs.next())
-                {
-                    Map<String, Object> row = new LinkedHashMap<>();
-                    for (int i = 1; i <= columnCount; i++)
-                    {
-                        row.put(meta.getColumnLabel(i), rs.getObject(i));
-                    }
-                    rowNo++;
-                    row.put(RuleParser.ROW_ID_KEY, rowNo);
-                    rows.add(row);
-                }
-            }
-            if (usedDbName == null)
-            {
-                usedDbName = connection.getCatalog();
-            }
-        }
-        catch (SQLException e)
-        {
-            log.error("读取数据表[{}]失败", tableName, e);
-            throw new ServiceException("读取数据表 " + tableName + " 失败：" + e.getMessage());
-        }
-        return new RowQuery(usedDbName, rows);
-    }
-
-    /**
-     * 解析实际可用的库名：规则库名合法且在实例中存在时使用，
-     * 否则记录告警并返回 null，走数据源连接自身的默认库。
-     */
-    private String resolveDbName(Connection connection, String dbName)
-    {
-        if (dbName == null || dbName.trim().isEmpty())
-        {
-            return null;
-        }
-        String candidate = dbName.trim();
-        if (!DB_NAME_PATTERN.matcher(candidate).matches())
-        {
-            log.warn("规则库名[{}]包含非法字符，回退到数据源默认库", dbName);
-            return null;
-        }
-        try (PreparedStatement statement = connection.prepareStatement(
-                "select 1 from information_schema.schemata where schema_name = ?"))
-        {
-            statement.setString(1, candidate);
-            try (ResultSet rs = statement.executeQuery())
-            {
-                if (rs.next())
-                {
-                    return candidate;
-                }
-            }
-        }
-        catch (SQLException e)
-        {
-            log.warn("校验库[{}]是否存在时出错，回退到数据源默认库", dbName, e);
-            return null;
-        }
-        log.warn("规则库名[{}]在实例中不存在，回退到数据源默认库", dbName);
-        return null;
-    }
-
-    /** 一次表读取的结果：实际使用的库名 + 数据行 */
-    private static class RowQuery
-    {
-        private final String dbName;
-
-        private final List<Map<String, Object>> rows;
-
-        private RowQuery(String dbName, List<Map<String, Object>> rows)
-        {
-            this.dbName = dbName;
-            this.rows = rows;
-        }
     }
 
     /**
@@ -240,30 +216,6 @@ public class RuleExecuteService
                 violation.put("row", row);
             }
         }
-    }
-
-    /** 统计命中违规的记录行数（同一条记录可能多个字段违规） */
-    private int countViolationRows(List<Map<String, Object>> violations)
-    {
-        Set<Object> rowIds = new HashSet<>();
-        for (Map<String, Object> violation : violations)
-        {
-            rowIds.add(violation.get("rowId"));
-        }
-        return rowIds.size();
-    }
-
-    /**
-     * 通过率：无违规记录占比，保留一位小数。
-     * 空表视为 100%，避免除零。
-     */
-    private double passRate(int totalRows, int violationRows)
-    {
-        if (totalRows <= 0)
-        {
-            return 100.0;
-        }
-        return Math.round((totalRows - violationRows) * 1000.0 / totalRows) / 10.0;
     }
 
     /** 按字段聚合违规条数，按条数降序，供报告画图 */

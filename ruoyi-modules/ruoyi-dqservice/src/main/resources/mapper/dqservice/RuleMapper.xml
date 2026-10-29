@@ -11,6 +11,8 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <result property="userName"    column="user_name"    />
         <result property="ruleContext"    column="rule_context"    />
         <result property="dbName"    column="db_name"    />
+        <result property="sourceId" column="source_id"/>
+        <result property="sourceName" column="source_name"/>
         <result property="tableName"    column="table_name"    />
         <result property="columnName"    column="column_name"    />
         <result property="typeName"    column="type_name"    />
@@ -27,7 +29,10 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     </resultMap>
 
     <sql id="selectRuleVo">
-        select rule_id, rule_name, user_id, user_name, rule_context, db_name, table_name, column_name, type_name, type_code, template_code, template_params, source_where, source_partition_number, source_partition_unit, source_time_zone, create_time, update_time, del from rule
+        select rule_id, rule_name, user_id, user_name, rule_context, source_id,
+        case when source_id is null then '内置本地数据源' else (select name from data_source where id = rule.source_id) end as source_name,
+        db_name, table_name, column_name, type_name, type_code, template_code, template_params, source_where,
+        source_partition_number, source_partition_unit, source_time_zone, create_time, update_time, del from rule
     </sql>
 
     <select id="selectRuleList" parameterType="Rule" resultMap="RuleResult">
@@ -58,6 +63,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     <insert id="insertRule" parameterType="Rule" useGeneratedKeys="true" keyProperty="ruleId">
         insert into rule
         <trim prefix="(" suffix=")" suffixOverrides=",">
+            source_id,
             <if test="ruleName != null">rule_name,</if>
             <if test="userId != null">user_id,</if>
             <if test="userName != null">user_name,</if>
@@ -78,6 +84,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="del != null">del,</if>
          </trim>
         <trim prefix="values (" suffix=")" suffixOverrides=",">
+            #{sourceId,jdbcType=INTEGER},
             <if test="ruleName != null">#{ruleName},</if>
             <if test="userId != null">#{userId},</if>
             <if test="userName != null">#{userName},</if>
@@ -102,6 +109,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     <update id="updateRule" parameterType="Rule">
         update rule
         <trim prefix="SET" suffixOverrides=",">
+            <if test="templateParams != null">source_id = #{sourceId,jdbcType=INTEGER},</if>
             <if test="ruleName != null">rule_name = #{ruleName},</if>
             <if test="userId != null">user_id = #{userId},</if>
             <if test="userName != null">user_name = #{userName},</if>

@@ -1,6 +1,8 @@
 package com.ruoyi.dqservice.template.impl;
 
+import com.ruoyi.common.core.exception.ServiceException;
 import com.ruoyi.dqservice.template.DrlSupport;
+import com.ruoyi.dqservice.template.QualityDimension;
 import com.ruoyi.dqservice.template.RuleTemplate;
 import com.ruoyi.dqservice.template.TemplateParam;
 import com.ruoyi.dqservice.util.RuleParser;
@@ -32,7 +34,7 @@ public class UniqueCheckTemplate implements RuleTemplate
     private static final String NULL_MODE_AS_VALUE = "视为重复";
 
     private static final List<TemplateParam> PARAMS = Collections.singletonList(
-            new TemplateParam("nullMode", "空值处理", "text", false, "默认忽略空值")
+            new TemplateParam("nullMode", "NULL 处理", "select", false, "默认忽略 NULL")
                     .withDefault(NULL_MODE_IGNORE)
                     .withOptions(Arrays.asList(NULL_MODE_IGNORE, NULL_MODE_AS_VALUE)));
 
@@ -49,9 +51,9 @@ public class UniqueCheckTemplate implements RuleTemplate
     }
 
     @Override
-    public String getDimension()
+    public QualityDimension getQualityDimension()
     {
-        return "一致性";
+        return QualityDimension.UNIQUENESS;
     }
 
     @Override
@@ -64,6 +66,10 @@ public class UniqueCheckTemplate implements RuleTemplate
     public String buildRule(String ruleName, String field, String columnType, Map<String, String> params)
     {
         String nullMode = DrlSupport.param(params, "nullMode");
+        if (nullMode != null && !NULL_MODE_IGNORE.equals(nullMode) && !NULL_MODE_AS_VALUE.equals(nullMode))
+        {
+            throw new ServiceException("唯一性校验的 NULL 处理只能选择忽略空值或视为重复");
+        }
         boolean includeNull = NULL_MODE_AS_VALUE.equals(nullMode);
         String name = DrlSupport.escape(ruleName);
         String col = DrlSupport.escape(field);

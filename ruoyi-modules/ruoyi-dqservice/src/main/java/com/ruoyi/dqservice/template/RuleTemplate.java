@@ -23,8 +23,14 @@ public interface RuleTemplate
     /** 模板名称 */
     String getName();
 
-    /** 所属质量维度（完整性 / 有效性 / 一致性 / 时效性 ...） */
-    String getDimension();
+    /** 所属质量维度，使用统一枚举，避免模板各自定义名称 */
+    QualityDimension getQualityDimension();
+
+    /** 保留原接口的中文维度名称 */
+    default String getDimension()
+    {
+        return getQualityDimension().getLabel();
+    }
 
     /** 参数定义，无参数时返回空集合 */
     List<TemplateParam> getParams();

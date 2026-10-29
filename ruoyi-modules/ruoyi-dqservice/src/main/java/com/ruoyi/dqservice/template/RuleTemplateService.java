@@ -59,6 +59,9 @@ public class RuleTemplateService
     @Autowired
     private DroolsManager droolsManager;
 
+    @Autowired
+    private RuleConfigurationValidator configurationValidator;
+
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     /** 模板清单，供前端动态渲染规则选择与参数表单 */
@@ -71,7 +74,33 @@ public class RuleTemplateService
             item.put("code", template.getCode());
             item.put("name", template.getName());
             item.put("dimension", template.getDimension());
+            item.put("dimensionCode", template.getQualityDimension().name());
             item.put("params", template.getParams());
+            item.put("contextTemplate", template instanceof ContextRuleTemplate);
+            result.add(item);
+        }
+        return result;
+    }
+
+    /** 维度定义与当前内置模板覆盖情况，不产生未检测维度的评分 */
+    public List<Map<String, Object>> listDimensions()
+    {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (QualityDimension dimension : QualityDimension.values())
+        {
+            List<String> templates = new ArrayList<>();
+            for (RuleTemplate template : registry.all())
+            {
+                if (template.getQualityDimension() == dimension)
+                {
+                    templates.add(template.getName());
+                }
+            }
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("code", dimension.name());
+            item.put("name", dimension.getLabel());
+            item.put("description", dimension.getDescription());
+            item.put("templates", templates);
             result.add(item);
         }
         return result;
@@ -94,6 +123,8 @@ public class RuleTemplateService
         {
             throw new ServiceException("请先选择需要检测的字段与规则模板");
         }
+        Map<String, Map<String, String>> fieldTypes = configurationValidator == null
+                ? java.util.Collections.emptyMap() : configurationValidator.prepare(rule);
         String ruleName = rule.getRuleName() == null || rule.getRuleName().trim().isEmpty()
                 ? "dq_rule" : rule.getRuleName().trim();
 
@@ -130,9 +161,24 @@ public class RuleTemplateService
                     throw new ServiceException("未知的规则模板：" + templateCode);
                 }
                 Map<String, String> params = col.paramsOf(templateCode);
-                drl.append(template.buildRule(ruleName, field, col.getType(), params));
+                String checkId = ContextRuleTemplate.checkId(field, templateCode);
+                String block = template.buildRule(ruleName, field, col.getType(), params);
+                if (!(template instanceof ContextRuleTemplate))
+                {
+                    String metadata = "v.put(\"checkId\", \"" + checkId + "\"); "
+                            + "v.put(\"templateCode\", \"" + templateCode + "\"); "
+                            + "v.put(\"dimensionCode\", \"" + template.getQualityDimension().name() + "\"); "
+                            + "v.put(\"resultType\", \"VIOLATION\"); violations.add(v);";
+                    block = block.replace("violations.add(v);", metadata);
+                }
+                drl.append(block);
                 usedCodes.add(templateCode);
-                configs.add(configOf(field, templateCode, params));
+                Map<String, Object> config = configOf(field, templateCode, params);
+                config.put("version", 2);
+                config.put("checkId", checkId);
+                config.put("type", col.getType());
+                config.put("fieldTypes", fieldTypes.getOrDefault(checkId, java.util.Collections.emptyMap()));
+                configs.add(config);
                 detected = true;
             }
             if (detected)
@@ -161,6 +207,7 @@ public class RuleTemplateService
             rule.setTypeName(MIXED_NAME);
         }
         rule.setTemplateParams(writeConfigs(configs));
+        fillDimensions(rule);
     }
 
     /**
@@ -182,7 +229,29 @@ public class RuleTemplateService
         rule.setTemplateParams("");
         rule.setTypeCode(CUSTOM);
         rule.setTypeName(CUSTOM_NAME);
+        rule.setQualityDimensions(new ArrayList<>());
         return drl;
+    }
+
+    /** 外部源和新版配置只执行注册模板重新生成的内容，不信任库内任意 DRL。 */
+    public String executionDrl(Rule rule, List<TemplateCheck> checks)
+    {
+        StringBuilder drl = new StringBuilder(DrlSupport.HEADER);
+        for (TemplateCheck check : checks)
+        {
+            RuleTemplate template = registry.get(check.getTemplate());
+            if (template == null) throw new ServiceException("未知的规则模板");
+            String expectedId = ContextRuleTemplate.checkId(check.getField(), check.getTemplate());
+            if (!expectedId.equals(check.getCheckId())) throw new ServiceException("检查标识与字段模板不匹配，请重新保存参数");
+            String block = template.buildRule(rule.getRuleName(), check.getField(), check.getType(), check.getParams());
+            if (!(template instanceof ContextRuleTemplate))
+                block = block.replace("violations.add(v);", "v.put(\"checkId\", \"" + expectedId
+                        + "\"); v.put(\"templateCode\", \"" + template.getCode()
+                        + "\"); v.put(\"dimensionCode\", \"" + template.getQualityDimension().name()
+                        + "\"); v.put(\"resultType\", \"VIOLATION\"); violations.add(v);");
+            drl.append(block);
+        }
+        return drl.toString();
     }
 
     /** 提取手写 DRL 中写出的违规字段，保持出现顺序并去重 */
@@ -230,6 +299,7 @@ public class RuleTemplateService
         {
             return;
         }
+        fillDimensions(rule);
         String code = rule.getTemplateCode();
         if (code != null && registry.contains(code))
         {
@@ -253,6 +323,53 @@ public class RuleTemplateService
         String inferred = inferTemplate(rule.getRuleContext());
         rule.setTypeName(inferred == null ? CUSTOM_NAME : registry.get(inferred).getName());
         rule.setTypeCode(inferred == null ? CUSTOM : inferred);
+    }
+
+    /** 类型编码保持兼容，维度独立回填；组合规则按模板配置去重 */
+    private void fillDimensions(Rule rule)
+    {
+        Set<String> dimensions = new LinkedHashSet<>();
+        rule.setQualityDimensions(new ArrayList<>());
+        String code = rule.getTemplateCode();
+        if (CUSTOM.equals(code))
+        {
+            return;
+        }
+        if (MIXED.equals(code))
+        {
+            try
+            {
+                List<Map<String, Object>> configs = objectMapper.readValue(rule.getTemplateParams(),
+                        new TypeReference<List<Map<String, Object>>>() {});
+                for (Map<String, Object> config : configs)
+                {
+                    RuleTemplate template = registry.get(asText(config.get("template")));
+                    if (template == null)
+                    {
+                        return;
+                    }
+                    dimensions.add(template.getDimension());
+                }
+            }
+            catch (Exception e)
+            {
+                log.warn("规则 {} 的维度无法从模板配置识别", rule.getRuleId());
+                return;
+            }
+        }
+        else
+        {
+            RuleTemplate template = registry.get(code);
+            if (template == null && (code == null || code.trim().isEmpty()))
+            {
+                template = registry.get(inferTemplate(rule.getRuleContext()));
+            }
+            if (template != null)
+            {
+                dimensions.add(template.getDimension());
+            }
+        }
+        rule.setQualityDimensions(new ArrayList<>(dimensions));
     }
 
     /** 推断历史规则使用的模板，无法判定时返回 null */
@@ -311,6 +428,7 @@ public class RuleTemplateService
                     {
                         col = new ColInfo();
                         col.setName(field);
+                        col.setType(asText(config.get("type")));
                         byField.put(field, col);
                     }
                     @SuppressWarnings("unchecked")

@@ -1,6 +1,7 @@
 package com.ruoyi.dqservice.template.impl;
 
 import com.ruoyi.dqservice.template.DrlSupport;
+import com.ruoyi.dqservice.template.QualityDimension;
 import com.ruoyi.dqservice.template.RuleTemplate;
 import com.ruoyi.dqservice.template.TemplateParam;
 import org.springframework.stereotype.Component;
@@ -37,9 +38,9 @@ public class EnumMatchTemplate implements RuleTemplate
     }
 
     @Override
-    public String getDimension()
+    public QualityDimension getQualityDimension()
     {
-        return "有效性";
+        return QualityDimension.VALIDITY;
     }
 
     @Override

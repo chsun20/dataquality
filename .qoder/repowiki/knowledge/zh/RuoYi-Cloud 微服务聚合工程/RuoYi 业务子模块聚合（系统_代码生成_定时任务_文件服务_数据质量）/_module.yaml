@@ -1,9 +1,0 @@
-schema_version: 1
-module_path: ruoyi_modules
-title: RuoYi 业务子模块聚合（系统/代码生成/定时任务/文件服务/数据质量）
-scope:
-    - ruoyi-modules/
-source_files: []
-depends_on: []
-related_to:
-    - path: ruoyi_auth

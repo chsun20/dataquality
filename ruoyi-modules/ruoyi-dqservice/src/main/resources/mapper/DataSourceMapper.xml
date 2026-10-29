@@ -12,15 +12,26 @@
         <result property="creatTime"    column="creat_time"    />
         <result property="updateTime"    column="update_time"    />
         <result property="del"    column="del"    />
+        <result property="host" column="host"/>
+        <result property="port" column="port"/>
+        <result property="databaseName" column="database_name"/>
+        <result property="username" column="username"/>
+        <result property="passwordCipher" column="password_cipher"/>
+        <result property="tlsMode" column="tls_mode"/>
+        <result property="timeZone" column="time_zone"/>
+        <result property="enabled" column="enabled"/>
+        <result property="configVersion" column="config_version"/>
     </resultMap>
 
     <sql id="selectDataSourceVo">
-        select id, name, type, description, creat_time, update_time, del from data_source
+        select id, name, type, description, creat_time, update_time, del,
+                host, port, database_name, username, password_cipher, tls_mode, time_zone, enabled, config_version from data_source
     </sql>
 
     <select id="selectDataSourceList" parameterType="DataSource" resultMap="DataSourceResult">
         <include refid="selectDataSourceVo"/>
         <where>
+            coalesce(del, 0) = 0
             <if test="name != null  and name != ''"> and name like concat('%', #{name}, '%')</if>
             <if test="type != null  and type != ''"> and type = #{type}</if>
             <if test="description != null  and description != ''"> and description = #{description}</if>
@@ -30,12 +41,22 @@
 
     <select id="selectDataSourceById" parameterType="Integer" resultMap="DataSourceResult">
         <include refid="selectDataSourceVo"/>
-        where id = #{id}
+        where id = #{id} and coalesce(del, 0) = 0
     </select>
 
-    <insert id="insertDataSource" parameterType="DataSource">
+    <select id="lockById" resultMap="DataSourceResult">
+        <include refid="selectDataSourceVo"/>
+        where id = #{id} and coalesce(del, 0) = 0 for update
+    </select>
+
+    <select id="countDependencies" resultType="int">
+        select count(*) from dq_rule_source_ref where source_id = #{id}
+    </select>
+
+    <insert id="insertDataSource" parameterType="DataSource" useGeneratedKeys="true" keyProperty="id">
         insert into data_source
         <trim prefix="(" suffix=")" suffixOverrides=",">
+            host, port, database_name, username, password_cipher, tls_mode, time_zone, enabled, config_version,
             <if test="id != null">id,</if>
             <if test="name != null">name,</if>
             <if test="type != null">type,</if>
@@ -45,6 +66,7 @@
             <if test="del != null">del,</if>
         </trim>
         <trim prefix="values (" suffix=")" suffixOverrides=",">
+            #{host}, #{port}, #{databaseName}, #{username}, #{passwordCipher}, #{tlsMode}, #{timeZone}, #{enabled}, #{configVersion},
             <if test="id != null">#{id},</if>
             <if test="name != null">#{name},</if>
             <if test="type != null">#{type},</if>
@@ -58,6 +80,9 @@
     <update id="updateDataSource" parameterType="DataSource">
         update data_source
         <trim prefix="SET" suffixOverrides=",">
+            host = #{host}, port = #{port}, database_name = #{databaseName}, username = #{username},
+            password_cipher = #{passwordCipher}, tls_mode = #{tlsMode}, time_zone = #{timeZone},
+            enabled = #{enabled}, config_version = config_version + 1,
             <if test="name != null">name = #{name},</if>
             <if test="type != null">type = #{type},</if>
             <if test="description != null">description = #{description},</if>
@@ -65,15 +90,15 @@
             <if test="updateTime != null">update_time = #{updateTime},</if>
             <if test="del != null">del = #{del},</if>
         </trim>
-        where id = #{id}
+        where id = #{id} and config_version = #{configVersion} and coalesce(del, 0) = 0
     </update>
 
     <delete id="deleteDataSourceById" parameterType="Integer">
-        delete from data_source where id = #{id}
+        update data_source set del = 1, update_time = now() where id = #{id}
     </delete>
 
     <delete id="deleteDataSourceByIds" parameterType="String">
-        delete from data_source where id in
+        update data_source set del = 1, update_time = now() where id in
         <foreach item="id" collection="array" open="(" separator="," close=")">
             #{id}
         </foreach>

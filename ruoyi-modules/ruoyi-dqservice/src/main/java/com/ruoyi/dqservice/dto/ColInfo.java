@@ -27,7 +27,7 @@ public class ColInfo
 
     private String name;
 
-    /** 字段类型，来自 Hive 元数据，可为空 */
+    /** 字段类型，来自数据源元数据，可为空 */
     private String type;
 
     /** 模板编码 -> 参数键值对 */

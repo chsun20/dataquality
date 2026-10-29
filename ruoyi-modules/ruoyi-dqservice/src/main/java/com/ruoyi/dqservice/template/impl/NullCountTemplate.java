@@ -1,6 +1,7 @@
 package com.ruoyi.dqservice.template.impl;
 
 import com.ruoyi.dqservice.template.DrlSupport;
+import com.ruoyi.dqservice.template.QualityDimension;
 import com.ruoyi.dqservice.template.RuleTemplate;
 import com.ruoyi.dqservice.template.TemplateParam;
 import org.springframework.stereotype.Component;
@@ -32,9 +33,9 @@ public class NullCountTemplate implements RuleTemplate
     }
 
     @Override
-    public String getDimension()
+    public QualityDimension getQualityDimension()
     {
-        return "完整性";
+        return QualityDimension.COMPLETENESS;
     }
 
     @Override

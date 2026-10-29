@@ -1,9 +1,0 @@
-schema_version: 1
-module_path: bin_scripts
-title: RuoYi 后端服务与前端开发启动脚本集
-scope:
-    - bin/
-source_files: []
-depends_on: []
-related_to:
-    - path: docker_infra

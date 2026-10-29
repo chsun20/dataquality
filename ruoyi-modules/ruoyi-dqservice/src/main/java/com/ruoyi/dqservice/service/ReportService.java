@@ -17,6 +17,8 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.stream.Collectors;
+import com.ruoyi.dqservice.util.QualityJson;
 
 /**
  * 质量报告服务：执行结果落库与查询。
@@ -57,7 +59,7 @@ public class ReportService
      */
     @Transactional(rollbackFor = Exception.class)
     public Long saveExecution(Rule rule, String tableName, int totalRows, int violationRows,
-                              double passRate, long costMs, List<Map<String, Object>> violations)
+                              Double passRate, long costMs, List<Map<String, Object>> violations)
     {
         ExecutionRecord record = new ExecutionRecord();
         record.setRuleId(rule.getRuleId());
@@ -88,10 +90,27 @@ public class ReportService
         return executionId;
     }
 
+    /** 新执行入口：状态、快照和全部结果明细同一事务保存。 */
+    @Transactional(rollbackFor = Exception.class)
+    public Long saveEvaluation(ExecutionRecord record, List<Map<String, Object>> results)
+    {
+        if (!"SUCCESS".equals(record.getEvaluationStatus())) record.setPassRate(null);
+        record.setCreateBy(currentUsername());
+        record.setCreateTime(DateUtils.getNowDate());
+        executionRecordMapper.insertExecutionRecord(record);
+        List<ExecutionViolation> details = results.stream().map(r -> toViolation(record.getExecutionId(), r)).collect(Collectors.toList());
+        for (int start = 0; start < details.size(); start += 200)
+            executionViolationMapper.insertViolationBatch(details.subList(start, Math.min(start + 200, details.size())));
+        log.info("质控报告已保存：批次={}，状态={}", record.getExecutionId(), record.getEvaluationStatus());
+        return record.getExecutionId();
+    }
+
     /** 查询执行记录列表 */
     public List<ExecutionRecord> selectExecutionList(ExecutionRecord query)
     {
-        return executionRecordMapper.selectExecutionRecordList(query);
+        List<ExecutionRecord> records = executionRecordMapper.selectExecutionRecordList(query);
+        records.forEach(this::normalizeEmptyReport);
+        return records;
     }
 
     /** 查询执行记录详情：汇总 + 违规明细 + 字段分布 */
@@ -103,9 +122,21 @@ public class ReportService
             throw new ServiceException("执行记录不存在：" + executionId);
         }
         List<ExecutionViolation> violations = executionViolationMapper.selectViolationByExecutionId(executionId);
-        record.setViolations(violations);
-        record.setFieldStats(buildFieldStats(violations));
+        record.setViolations(violations.stream().filter(v -> !"UNVERIFIABLE".equals(v.getResultType())).collect(Collectors.toList()));
+        record.setUnverifiable(violations.stream().filter(v -> "UNVERIFIABLE".equals(v.getResultType())).collect(Collectors.toList()));
+        record.setFieldStats(buildFieldStats(record.getViolations()));
+        normalizeEmptyReport(record);
         return record;
+    }
+
+    /** 历史空表报告也按不评价展示，不修改数据库中的历史记录 */
+    private void normalizeEmptyReport(ExecutionRecord record)
+    {
+        if (Integer.valueOf(0).equals(record.getTotalRows()) || "PARTIAL".equals(record.getEvaluationStatus())
+                || "FAILED".equals(record.getEvaluationStatus()) || "NO_DATA".equals(record.getEvaluationStatus()))
+        {
+            record.setPassRate(null);
+        }
     }
 
     /** Drools 产出的 Map 违规明细 -> 数据库实体 */
@@ -116,6 +147,18 @@ public class ReportService
         detail.setRowId(toInteger(violation.get("rowId")));
         detail.setFieldName(truncate(violation.get("field"), LEN_FIELD_NAME));
         detail.setRuleName(truncate(violation.get("rule"), LEN_RULE_NAME));
+        detail.setCheckId(truncate(violation.get("checkId"), 64));
+        detail.setTemplateCode(truncate(violation.get("templateCode"), 64));
+        detail.setDimensionCode(truncate(violation.get("dimensionCode"), 32));
+        detail.setResultType("UNVERIFIABLE".equals(violation.get("resultType")) ? "UNVERIFIABLE" : "VIOLATION");
+        detail.setReason(truncate(violation.get("reason"), 255));
+        detail.setComparisonValue(truncate(violation.get("comparisonValue"), 255));
+        if (violation.get("involvedFields") instanceof Map)
+        {
+            Map<String, String> values = new LinkedHashMap<>();
+            ((Map<?, ?>) violation.get("involvedFields")).forEach((k, v) -> values.put(String.valueOf(k), truncate(v, 255)));
+            detail.setInvolvedFields(QualityJson.write(values));
+        }
 
         Object rowObject = violation.get("row");
         if (rowObject instanceof Map)

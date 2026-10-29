@@ -81,6 +81,15 @@ foreach ($name in $Only) {
         continue
     }
 
+    # 终端可能早于环境变量设置启动；仅为质控服务补读用户级配置，不输出密钥。
+    if ($name -eq 'dqservice') {
+        foreach ($key in @('DQ_SOURCE_AES_KEY', 'DQ_MYSQL_ALLOWED_TARGETS', 'DQ_MYSQL_LOCAL_TLS_DISABLED')) {
+            if (-not [Environment]::GetEnvironmentVariable($key, 'Process')) {
+                $value = [Environment]::GetEnvironmentVariable($key, 'User')
+                if ($value) { [Environment]::SetEnvironmentVariable($key, $value, 'Process') }
+            }
+        }
+    }
     $out = Join-Path $logDir "$name.out.log"
     $err = Join-Path $logDir "$name.err.log"
     $proc = Start-Process -FilePath $java `

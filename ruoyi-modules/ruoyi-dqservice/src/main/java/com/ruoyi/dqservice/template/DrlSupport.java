@@ -22,7 +22,8 @@ public final class DrlSupport
             "package dq.dynamic\n"
             + "import java.util.Map\n"
             + "import java.util.HashMap\n"
-            + "global java.util.List violations\n\n";
+            + "global java.util.List violations\n"
+                        + "global com.ruoyi.dqservice.template.QualityExecutionContext qualityContext\n\n";
 
     /** 规则主体起点：第一处 rule "..." 声明 */
     private static final Pattern BODY_START = Pattern.compile("(?m)^[ \\t]*rule[ \\t]+\\\"");
@@ -88,7 +89,9 @@ public final class DrlSupport
         {
             return "";
         }
-        return s.replace("\\", "\\\\").replace("\"", "\\\"");
+        return s.replace("\\", "\\\\").replace("\"", "\\\"")
+                .replace("\r", "\\r").replace("\n", "\\n").replace("\t", "\\t")
+                .replace("\b", "\\b").replace("\f", "\\f");
     }
 
     /**

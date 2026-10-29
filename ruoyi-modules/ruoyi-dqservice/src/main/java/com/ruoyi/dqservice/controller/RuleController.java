@@ -9,6 +9,7 @@ import com.ruoyi.common.security.utils.SecurityUtils;
 import com.ruoyi.dqservice.domain.DroolsRule;
 import com.ruoyi.dqservice.template.DrlSupport;
 import com.ruoyi.dqservice.template.RuleTemplateService;
+import com.ruoyi.dqservice.source.RuleSourceAccess;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -101,11 +102,13 @@ public class RuleController extends BaseController
         if (isCustom(rule))
         {
             // 自定义规则：手写 DRL，补全头部后保存，规则类型记为自定义规则
+            RuleSourceAccess.custom(rule);
             templateService.applyCustom(rule);
         }
         else
         {
             // 按所选模板生成 DRL，并回填字段名与模板配置
+            RuleSourceAccess.templates(rule);
             templateService.build(rule);
         }
         return toAjax(ruleService.insertRule(rule));
@@ -134,6 +137,16 @@ public class RuleController extends BaseController
             return AjaxResult.error("规则不存在：" + rule.getRuleId());
         }
 
+        if (!RuleTemplateService.CUSTOM.equals(existing.getTemplateCode())
+                && existing.getTemplateParams() != null && !existing.getTemplateParams().isEmpty())
+        {
+            if (rule.getCols() == null || rule.getCols().length == 0)
+                return AjaxResult.error("模板规则请通过参数向导编辑，DRL 仅支持只读预览");
+            RuleSourceAccess.templates(rule);
+            templateService.build(rule);
+            return toAjax(ruleService.updateRule(rule));
+        }
+        RuleSourceAccess.custom(rule);
         String submitted = rule.getRuleContext();
         if (submitted != null && !submitted.trim().isEmpty())
         {
@@ -168,12 +181,13 @@ public class RuleController extends BaseController
     /**
      * 校验手写 DRL 的语法，供「新增自定义规则」与「修改规则」弹窗使用
      */
-    @RequiresPermissions("dqservice:rule:list")
+    @RequiresPermissions("dqservice:rule:custom")
     @PostMapping("/validate")
     public AjaxResult validate(@RequestBody Rule rule)
     {
         // 包一层 Map 返回，避免 AjaxResult.success(String) 被当成提示语
         Map<String, Object> data = new LinkedHashMap<>();
+        RuleSourceAccess.custom(rule);
         data.put("drl", templateService.validate(rule.getRuleContext()));
         return AjaxResult.success(data);
     }

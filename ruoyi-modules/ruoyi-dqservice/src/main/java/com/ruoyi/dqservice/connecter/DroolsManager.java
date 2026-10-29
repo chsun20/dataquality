@@ -2,6 +2,7 @@ package com.ruoyi.dqservice.connecter;
 
 import com.ruoyi.common.core.exception.ServiceException;
 import com.ruoyi.dqservice.domain.DroolsRule;
+import com.ruoyi.dqservice.template.QualityExecutionContext;
 import lombok.extern.slf4j.Slf4j;
 import org.kie.api.KieBase;
 import org.kie.api.KieServices;
@@ -174,6 +175,11 @@ public class DroolsManager {
      * @return 违规明细列表，每项包含 rule / field / rowId
      */
     public List<Map<String, Object>> fireRules(String drl, Collection<Map<String, Object>> facts) {
+        return fireRules(drl, facts, new QualityExecutionContext(java.time.Instant.now(), facts));
+    }
+
+    public List<Map<String, Object>> fireRules(String drl, Collection<Map<String, Object>> facts,
+            QualityExecutionContext context) {
         KieHelper kieHelper = new KieHelper();
         kieHelper.addContent(drl, ResourceType.DRL);
 
@@ -201,6 +207,9 @@ public class DroolsManager {
                 // 手写 DRL 没有声明 global 时给出可读提示，而不是抛裸异常
                 throw new ServiceException("规则未声明 global java.util.List violations，无法收集违规结果");
             }
+            boolean usesContext = kieSession.getKieBase().getKiePackages().stream()
+                    .flatMap(p -> p.getGlobalVariables().stream()).anyMatch(g -> "qualityContext".equals(g.getName()));
+            if (usesContext) kieSession.setGlobal("qualityContext", context);
             for (Map<String, Object> fact : facts) {
                 kieSession.insert(fact);
             }

@@ -41,6 +41,10 @@ nbdist/
 *.xml.versionsBackup
 *.swp
 
+### 本地文档与 Qoder 产物 ###
+/docs/
+/.qoder/
+
 ### 本地运行产物 ###
 /logs/
 /.tmp/

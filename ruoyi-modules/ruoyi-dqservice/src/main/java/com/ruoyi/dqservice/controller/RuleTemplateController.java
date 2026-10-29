@@ -4,6 +4,8 @@ import com.ruoyi.common.core.web.controller.BaseController;
 import com.ruoyi.common.core.web.domain.AjaxResult;
 import com.ruoyi.dqservice.domain.Rule;
 import com.ruoyi.dqservice.template.RuleTemplateService;
+import com.ruoyi.dqservice.source.RuleSourceAccess;
+import com.ruoyi.common.security.annotation.RequiresPermissions;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -37,14 +39,23 @@ public class RuleTemplateController extends BaseController
         return AjaxResult.success(templateService.listTemplates());
     }
 
+    /** 查询维度定义与内置模板覆盖情况 */
+    @GetMapping("/dimensions")
+    public AjaxResult dimensions()
+    {
+        return AjaxResult.success(templateService.listDimensions());
+    }
+
     /**
      * 根据当前选择的字段与模板预览生成的 DRL，不落库
      */
+    @RequiresPermissions("dqservice:dataSource:metadata")
     @PostMapping("/preview")
     public AjaxResult preview(@RequestBody Rule rule)
     {
         // 包一层 Map 返回，避免 AjaxResult.success(String) 被当成提示语
         Map<String, Object> data = new LinkedHashMap<>();
+        RuleSourceAccess.templates(rule);
         data.put("drl", templateService.preview(rule));
         return AjaxResult.success(data);
     }

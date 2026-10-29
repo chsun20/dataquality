@@ -2,6 +2,7 @@ package com.ruoyi.dqservice.template.impl;
 
 import com.ruoyi.common.core.exception.ServiceException;
 import com.ruoyi.dqservice.template.DrlSupport;
+import com.ruoyi.dqservice.template.QualityDimension;
 import com.ruoyi.dqservice.template.RuleTemplate;
 import com.ruoyi.dqservice.template.TemplateParam;
 import org.springframework.stereotype.Component;
@@ -45,9 +46,9 @@ public class DateRangeTemplate implements RuleTemplate
     }
 
     @Override
-    public String getDimension()
+    public QualityDimension getQualityDimension()
     {
-        return "时效性";
+        return QualityDimension.VALIDITY;
     }
 
     @Override
@@ -72,17 +73,22 @@ public class DateRangeTemplate implements RuleTemplate
         String ref = DrlSupport.fieldRef(field);
         String date = "((java.util.Date)" + ref + ")";
         List<String> conditions = new ArrayList<>();
+        List<String> localConditions = new ArrayList<>();
+        String localDate = "((java.time.LocalDateTime)" + ref + ").toLocalDate()";
         if (start != null)
         {
             conditions.add(date + ".before(new java.util.Date(" + start + "L))");
+            localConditions.add(localDate + ".isBefore(java.time.LocalDate.parse(\"" + DrlSupport.escape(DrlSupport.param(params, "start")) + "\"))");
         }
         if (end != null)
         {
             // 结束日当天整体有效，因此取次日零点作为边界
             conditions.add(date + ".after(new java.util.Date(" + (end + 86400000L) + "L))");
+            localConditions.add(localDate + ".isAfter(java.time.LocalDate.parse(\"" + DrlSupport.escape(DrlSupport.param(params, "end")) + "\"))");
         }
-        String condition = ref + " instanceof java.util.Date && ("
-                + String.join(" || ", conditions) + ")";
+        String condition = "(" + ref + " instanceof java.util.Date && ("
+                + String.join(" || ", conditions) + ")) || (" + ref + " instanceof java.time.LocalDateTime && ("
+                + String.join(" || ", localConditions) + "))";
         return DrlSupport.ruleBlock(ruleName, field, "date", condition);
     }
 

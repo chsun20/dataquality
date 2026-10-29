@@ -34,4 +34,12 @@ public class ExecutionViolation implements Serializable
 
     /** 字段值 */
     private String fieldValue;
+
+    private String checkId;
+    private String templateCode;
+    private String dimensionCode;
+    private String resultType = "VIOLATION";
+    private String reason;
+    private String comparisonValue;
+    private String involvedFields;
 }

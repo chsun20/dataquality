@@ -12,20 +12,31 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <result property="fieldName"   column="field_name"   />
         <result property="ruleName"    column="rule_name"    />
         <result property="fieldValue"  column="field_value"  />
+        <result property="checkId" column="check_id"/>
+        <result property="templateCode" column="template_code"/>
+        <result property="dimensionCode" column="dimension_code"/>
+        <result property="resultType" column="result_type"/>
+        <result property="reason" column="reason"/>
+        <result property="comparisonValue" column="comparison_value"/>
+        <result property="involvedFields" column="involved_fields"/>
     </resultMap>
 
     <select id="selectViolationByExecutionId" parameterType="Long" resultMap="ExecutionViolationResult">
-        select violation_id, execution_id, row_id, record_id, field_name, rule_name, field_value
+        select violation_id, execution_id, row_id, record_id, field_name, rule_name, field_value,
+        check_id, template_code, dimension_code, result_type, reason, comparison_value, involved_fields
         from dq_violation
         where execution_id = #{executionId}
         order by violation_id
     </select>
 
     <insert id="insertViolationBatch" parameterType="java.util.List">
-        insert into dq_violation (execution_id, row_id, record_id, field_name, rule_name, field_value)
+        insert into dq_violation (execution_id, row_id, record_id, field_name, rule_name, field_value,
+        check_id, template_code, dimension_code, result_type, reason, comparison_value, involved_fields)
         values
         <foreach collection="list" item="item" separator=",">
-            (#{item.executionId}, #{item.rowId}, #{item.recordId}, #{item.fieldName}, #{item.ruleName}, #{item.fieldValue})
+            (#{item.executionId}, #{item.rowId}, #{item.recordId}, #{item.fieldName}, #{item.ruleName}, #{item.fieldValue},
+            #{item.checkId}, #{item.templateCode}, #{item.dimensionCode}, #{item.resultType}, #{item.reason},
+            #{item.comparisonValue}, #{item.involvedFields})
         </foreach>
     </insert>
 

@@ -17,11 +17,22 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <result property="costMs"         column="cost_ms"         />
         <result property="createBy"       column="create_by"       />
         <result property="createTime"     column="create_time"     />
+        <result property="sourceId" column="source_id"/>
+        <result property="sourceName" column="source_name"/>
+        <result property="detectedAt" column="detected_at"/>
+        <result property="evaluationStatus" column="evaluation_status"/>
+        <result property="errorMessage" column="error_message"/>
+        <result property="configSnapshot" column="config_snapshot"/>
+        <result property="checkCounts" column="check_counts"/>
+        <result property="unverifiableCount" column="unverifiable_count"/>
+        <result property="scanNote" column="scan_note"/>
     </resultMap>
 
     <sql id="selectExecutionVo">
         select execution_id, rule_id, rule_name, db_name, table_name, total_rows,
-               violation_count, violation_rows, pass_rate, cost_ms, create_by, create_time
+               violation_count, violation_rows, pass_rate, cost_ms, create_by, create_time,
+               source_id, source_name, detected_at, evaluation_status, error_message,
+               config_snapshot, check_counts, unverifiable_count, scan_note
         from dq_execution
     </sql>
 
@@ -43,6 +54,8 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     <insert id="insertExecutionRecord" parameterType="ExecutionRecord" useGeneratedKeys="true" keyProperty="executionId">
         insert into dq_execution
         <trim prefix="(" suffix=")" suffixOverrides=",">
+            source_id, source_name, detected_at, evaluation_status, error_message,
+            config_snapshot, check_counts, unverifiable_count, scan_note,
             <if test="ruleId != null">rule_id,</if>
             <if test="ruleName != null">rule_name,</if>
             <if test="dbName != null">db_name,</if>
@@ -50,12 +63,14 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="totalRows != null">total_rows,</if>
             <if test="violationCount != null">violation_count,</if>
             <if test="violationRows != null">violation_rows,</if>
-            <if test="passRate != null">pass_rate,</if>
+            pass_rate,
             <if test="costMs != null">cost_ms,</if>
             <if test="createBy != null">create_by,</if>
             <if test="createTime != null">create_time,</if>
         </trim>
         <trim prefix="values (" suffix=")" suffixOverrides=",">
+            #{sourceId,jdbcType=INTEGER}, #{sourceName}, #{detectedAt}, #{evaluationStatus}, #{errorMessage},
+            #{configSnapshot}, #{checkCounts}, #{unverifiableCount}, #{scanNote},
             <if test="ruleId != null">#{ruleId},</if>
             <if test="ruleName != null">#{ruleName},</if>
             <if test="dbName != null">#{dbName},</if>
@@ -63,7 +78,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
             <if test="totalRows != null">#{totalRows},</if>
             <if test="violationCount != null">#{violationCount},</if>
             <if test="violationRows != null">#{violationRows},</if>
-            <if test="passRate != null">#{passRate},</if>
+            #{passRate,jdbcType=DECIMAL},
             <if test="costMs != null">#{costMs},</if>
             <if test="createBy != null">#{createBy},</if>
             <if test="createTime != null">#{createTime},</if>
