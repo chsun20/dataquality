@@ -1,7 +1,7 @@
 package com.myspace.test.entity;
 
 public class Order {
-    private int amout;//订单原价⾦额
+    private int amout;//订单原价金额
     private int score;//积分
     public int getAmout() { return amout; }
     public void setAmout(int amout) { this.amout = amout; }
