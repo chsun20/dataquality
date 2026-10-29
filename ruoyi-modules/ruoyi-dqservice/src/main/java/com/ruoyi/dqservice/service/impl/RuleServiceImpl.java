@@ -6,6 +6,7 @@ import java.util.Set;
 import java.util.Arrays;
 import com.ruoyi.dqservice.mapper.RuleSourceRefMapper;
 import com.ruoyi.dqservice.mapper.DataSourceMapper;
+import com.ruoyi.dqservice.mapper.QualityTaskMapper;
 import com.ruoyi.dqservice.template.TemplateCheck;
 import com.ruoyi.common.core.exception.ServiceException;
 import org.springframework.transaction.annotation.Transactional;
@@ -29,6 +30,7 @@ public class RuleServiceImpl implements IRuleService
     private RuleMapper ruleMapper;
     @Autowired private RuleSourceRefMapper references;
     @Autowired private DataSourceMapper sources;
+    @Autowired private QualityTaskMapper qualityTasks;
 
     /**
      * 查询规则
@@ -103,6 +105,8 @@ public class RuleServiceImpl implements IRuleService
     @Transactional(rollbackFor = Exception.class)
     public int deleteRuleByRuleIds(Long[] ruleIds)
     {
+        if (qualityTasks.countRuleUsage(ruleIds) > 0)
+            throw new ServiceException("规则已被质控任务引用，请先从任务中移除");
         for (Long id : Arrays.stream(ruleIds).distinct().sorted().toArray(Long[]::new))
         {
             references.lockRule(id);

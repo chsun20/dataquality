@@ -95,7 +95,7 @@ public class ReportService
     public Long saveEvaluation(ExecutionRecord record, List<Map<String, Object>> results)
     {
         if (!"SUCCESS".equals(record.getEvaluationStatus())) record.setPassRate(null);
-        record.setCreateBy(currentUsername());
+        if (record.getCreateBy() == null || record.getCreateBy().trim().isEmpty()) record.setCreateBy(currentUsername());
         record.setCreateTime(DateUtils.getNowDate());
         executionRecordMapper.insertExecutionRecord(record);
         List<ExecutionViolation> details = results.stream().map(r -> toViolation(record.getExecutionId(), r)).collect(Collectors.toList());

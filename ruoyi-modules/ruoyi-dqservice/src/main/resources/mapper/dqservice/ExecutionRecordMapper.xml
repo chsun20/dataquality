@@ -6,6 +6,8 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
 
     <resultMap type="ExecutionRecord" id="ExecutionRecordResult">
         <result property="executionId"    column="execution_id"    />
+        <result property="runId"          column="run_id"          />
+        <result property="taskId"         column="task_id"         />
         <result property="ruleId"         column="rule_id"         />
         <result property="ruleName"       column="rule_name"       />
         <result property="dbName"         column="db_name"         />
@@ -29,7 +31,7 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     </resultMap>
 
     <sql id="selectExecutionVo">
-        select execution_id, rule_id, rule_name, db_name, table_name, total_rows,
+        select execution_id, run_id, task_id, rule_id, rule_name, db_name, table_name, total_rows,
                violation_count, violation_rows, pass_rate, cost_ms, create_by, create_time,
                source_id, source_name, detected_at, evaluation_status, error_message,
                config_snapshot, check_counts, unverifiable_count, scan_note
@@ -39,6 +41,8 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
     <select id="selectExecutionRecordList" parameterType="ExecutionRecord" resultMap="ExecutionRecordResult">
         <include refid="selectExecutionVo"/>
         <where>
+            <if test="runId != null">and run_id = #{runId}</if>
+            <if test="taskId != null">and task_id = #{taskId}</if>
             <if test="ruleId != null">and rule_id = #{ruleId}</if>
             <if test="ruleName != null and ruleName != ''">and rule_name like concat('%', #{ruleName}, '%')</if>
             <if test="tableName != null and tableName != ''">and table_name like concat('%', #{tableName}, '%')</if>
@@ -56,6 +60,8 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <trim prefix="(" suffix=")" suffixOverrides=",">
             source_id, source_name, detected_at, evaluation_status, error_message,
             config_snapshot, check_counts, unverifiable_count, scan_note,
+            <if test="runId != null">run_id,</if>
+            <if test="taskId != null">task_id,</if>
             <if test="ruleId != null">rule_id,</if>
             <if test="ruleName != null">rule_name,</if>
             <if test="dbName != null">db_name,</if>
@@ -71,6 +77,8 @@ PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
         <trim prefix="values (" suffix=")" suffixOverrides=",">
             #{sourceId,jdbcType=INTEGER}, #{sourceName}, #{detectedAt}, #{evaluationStatus}, #{errorMessage},
             #{configSnapshot}, #{checkCounts}, #{unverifiableCount}, #{scanNote},
+            <if test="runId != null">#{runId},</if>
+            <if test="taskId != null">#{taskId},</if>
             <if test="ruleId != null">#{ruleId},</if>
             <if test="ruleName != null">#{ruleName},</if>
             <if test="dbName != null">#{dbName},</if>

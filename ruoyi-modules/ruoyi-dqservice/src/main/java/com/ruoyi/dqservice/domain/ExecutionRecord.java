@@ -21,6 +21,12 @@ public class ExecutionRecord implements Serializable
     /** 执行批次ID */
     private Long executionId;
 
+    /** 任务运行批次ID；手工执行时为 null */
+    private Long runId;
+
+    /** 质控任务ID；手工执行时为 null */
+    private Long taskId;
+
     /** 规则ID */
     private Long ruleId;
 

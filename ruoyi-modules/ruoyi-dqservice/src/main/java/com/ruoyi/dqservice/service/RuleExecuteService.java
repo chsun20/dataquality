@@ -70,6 +70,14 @@ public class RuleExecuteService
      */
     public Map<String, Object> execute(Long ruleId, Integer limit)
     {
+        return execute(ruleId, limit, null, null, null);
+    }
+
+    /**
+     * 任务触发入口：回填运行批次与任务ID；定时执行无登录上下文时由 operator 记录触发身份。
+     */
+    public Map<String, Object> execute(Long ruleId, Integer limit, Long runId, Long taskId, String operator)
+    {
         Rule rule = ruleMapper.selectRuleByRuleId(ruleId);
         if (rule == null)
         {
@@ -90,6 +98,9 @@ public class RuleExecuteService
         long started = System.nanoTime();
         Instant detectedAt = Instant.now();
         ExecutionRecord record = new ExecutionRecord();
+        record.setRunId(runId);
+        record.setTaskId(taskId);
+        record.setCreateBy(operator);
         record.setRuleId(rule.getRuleId());
         record.setRuleName(rule.getRuleName());
         record.setDbName(rule.getDbName());

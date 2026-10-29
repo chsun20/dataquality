@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper
+PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+"http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.ruoyi.dqservice.mapper.QualityTaskMapper">
+
+    <resultMap type="QualityTask" id="QualityTaskResult">
+        <result property="taskId"         column="task_id"         />
+        <result property="taskName"       column="task_name"       />
+        <result property="sourceId"       column="source_id"       />
+        <result property="sourceName"     column="source_name"     />
+        <result property="dbName"         column="db_name"         />
+        <result property="tableName"      column="table_name"      />
+        <result property="limitRows"      column="limit_rows"      />
+        <result property="enabled"        column="enabled"         />
+        <result property="cronExpression" column="cron_expression" />
+        <result property="misfirePolicy"  column="misfire_policy"  />
+        <result property="remark"         column="remark"          />
+        <result property="createBy"       column="create_by"       />
+        <result property="createTime"     column="create_time"     />
+        <result property="updateBy"       column="update_by"       />
+        <result property="updateTime"     column="update_time"     />
+        <result property="ruleCount"      column="rule_count"      />
+        <result property="lastRunStatus"  column="last_run_status" />
+        <result property="lastRunAt"      column="last_run_at"     />
+    </resultMap>
+
+    <resultMap type="Rule" id="TaskRuleResult">
+        <result property="ruleId"         column="rule_id"         />
+        <result property="ruleName"       column="rule_name"       />
+        <result property="sourceId"       column="source_id"       />
+        <result property="dbName"         column="db_name"         />
+        <result property="tableName"      column="table_name"      />
+        <result property="columnName"     column="column_name"     />
+        <result property="typeName"       column="type_name"       />
+        <result property="typeCode"       column="type_code"       />
+        <result property="templateCode"   column="template_code"   />
+        <result property="templateParams" column="template_params" />
+    </resultMap>
+
+    <sql id="selectQualityTaskVo">
+        select t.task_id, t.task_name, t.source_id,
+               case when t.source_id is null then '内置本地数据源'
+                    else (select name from data_source where id = t.source_id) end as source_name,
+               t.db_name, t.table_name, t.limit_rows, t.enabled, t.cron_expression, t.misfire_policy,
+               t.remark, t.create_by, t.create_time, t.update_by, t.update_time,
+               (select count(*) from dq_task_rule tr where tr.task_id = t.task_id) as rule_count,
+               (select r.status from dq_task_run r where r.task_id = t.task_id order by r.run_id desc limit 1) as last_run_status,
+               (select r.started_at from dq_task_run r where r.task_id = t.task_id order by r.run_id desc limit 1) as last_run_at
+        from dq_task t
+    </sql>
+
+    <select id="selectQualityTaskList" parameterType="QualityTask" resultMap="QualityTaskResult">
+        <include refid="selectQualityTaskVo"/>
+        <where>
+            <if test="taskName != null and taskName != ''">and t.task_name like concat('%', #{taskName}, '%')</if>
+            <if test="tableName != null and tableName != ''">and t.table_name like concat('%', #{tableName}, '%')</if>
+            <if test="sourceId != null">and t.source_id = #{sourceId}</if>
+            <if test="enabled != null">and t.enabled = #{enabled}</if>
+        </where>
+        order by t.task_id desc
+    </select>
+
+    <select id="selectQualityTaskById" parameterType="Long" resultMap="QualityTaskResult">
+        <include refid="selectQualityTaskVo"/>
+        where t.task_id = #{taskId}
+    </select>
+
+    <select id="selectEnabledTasks" resultMap="QualityTaskResult">
+        <include refid="selectQualityTaskVo"/>
+        where t.enabled = 1 and t.cron_expression is not null and t.cron_expression &lt;&gt; ''
+        order by t.task_id
+    </select>
+
+    <insert id="insertQualityTask" parameterType="QualityTask" useGeneratedKeys="true" keyProperty="taskId">
+        insert into dq_task (task_name, source_id, db_name, table_name, limit_rows, enabled,
+                             cron_expression, misfire_policy, remark, create_by, create_time, update_by, update_time)
+        values (#{taskName}, #{sourceId,jdbcType=INTEGER}, #{dbName}, #{tableName}, #{limitRows}, #{enabled},
+                #{cronExpression}, #{misfirePolicy}, #{remark}, #{createBy}, #{createTime}, #{updateBy}, #{updateTime})
+    </insert>
+
+    <update id="updateQualityTask" parameterType="QualityTask">
+        update dq_task
+        set task_name = #{taskName},
+            source_id = #{sourceId,jdbcType=INTEGER},
+            db_name = #{dbName},
+            table_name = #{tableName},
+            limit_rows = #{limitRows},
+            enabled = #{enabled},
+            cron_expression = #{cronExpression},
+            misfire_policy = #{misfirePolicy},
+            remark = #{remark},
+            update_by = #{updateBy},
+            update_time = #{updateTime}
+        where task_id = #{taskId}
+    </update>
+
+    <delete id="deleteQualityTaskByIds" parameterType="String">
+        delete from dq_task where task_id in
+        <foreach item="taskId" collection="array" open="(" separator="," close=")">
+            #{taskId}
+        </foreach>
+    </delete>
+
+    <select id="selectRuleIdsByTaskId" parameterType="Long" resultType="long">
+        select rule_id from dq_task_rule where task_id = #{taskId} order by sort_no, rule_id
+    </select>
+
+    <select id="selectRulesByTaskId" parameterType="Long" resultMap="TaskRuleResult">
+        select r.rule_id, r.rule_name, r.source_id, r.db_name, r.table_name, r.column_name,
+               r.type_name, r.type_code, r.template_code, r.template_params
+        from dq_task_rule tr inner join rule r on r.rule_id = tr.rule_id
+        where tr.task_id = #{taskId}
+        order by tr.sort_no, r.rule_id
+    </select>
+
+    <select id="selectCandidateRules" resultMap="TaskRuleResult">
+        select rule_id, rule_name, source_id, db_name, table_name, column_name,
+               type_name, type_code, template_code, template_params
+        from rule
+        <where>
+            <choose>
+                <when test="sourceId != null">and source_id = #{sourceId}</when>
+                <otherwise>and source_id is null</otherwise>
+            </choose>
+            and table_name = #{tableName}
+        </where>
+        order by rule_id
+    </select>
+
+    <delete id="deleteTaskRulesByTaskId" parameterType="Long">
+        delete from dq_task_rule where task_id = #{taskId}
+    </delete>
+
+    <insert id="insertTaskRule">
+        insert into dq_task_rule (task_id, rule_id, sort_no) values (#{taskId}, #{ruleId}, #{sortNo})
+    </insert>
+
+    <select id="countRuleUsage" resultType="int">
+        select count(*) from dq_task_rule where rule_id in
+        <foreach item="id" collection="array" open="(" separator="," close=")">
+            #{id}
+        </foreach>
+    </select>
+</mapper>
