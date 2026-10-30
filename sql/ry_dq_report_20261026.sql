@@ -8,6 +8,9 @@
 --   3. 使用 CREATE TABLE IF NOT EXISTS，重复执行不会清空历史数据
 -- ----------------------------
 
+-- mysql 客户端默认字符集可能是 latin1，显式声明避免中文注释被二次编码
+SET NAMES utf8mb4;
+
 CREATE TABLE IF NOT EXISTS `dq_execution` (
   `execution_id`    bigint(20)    NOT NULL AUTO_INCREMENT COMMENT '执行批次ID',
   `rule_id`         bigint(20)    DEFAULT NULL COMMENT '规则ID',

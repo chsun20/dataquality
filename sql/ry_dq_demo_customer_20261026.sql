@@ -10,6 +10,9 @@
 --   city 为空      : C006                               -> 1 行
 -- ----------------------------
 
+-- mysql 客户端默认字符集可能是 latin1，显式声明避免中文注释与数据被二次编码
+SET NAMES utf8mb4;
+
 DROP TABLE IF EXISTS `dq_customer`;
 CREATE TABLE `dq_customer` (
   `id` int(11) NOT NULL AUTO_INCREMENT COMMENT '主键',

@@ -4,6 +4,9 @@
 -- 日期：2026-10-26
 -- ----------------------------
 
+-- mysql 客户端默认字符集可能是 latin1，显式声明避免中文注释被二次编码
+SET NAMES utf8mb4;
+
 DROP TABLE IF EXISTS `rule`;
 CREATE TABLE `rule` (
   `rule_id` bigint(20) NOT NULL AUTO_INCREMENT COMMENT '规则ID',

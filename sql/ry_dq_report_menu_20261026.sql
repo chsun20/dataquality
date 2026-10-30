@@ -5,6 +5,9 @@
 -- 说明：挂在「数据质量」目录下，指向 rules/report/index 页面
 -- ----------------------------
 
+-- mysql 客户端默认字符集可能是 latin1，显式声明避免中文注释与菜单名被二次编码
+SET NAMES utf8mb4;
+
 USE `ry-cloud`;
 
 DELETE FROM sys_menu WHERE menu_id BETWEEN 2010 AND 2019;

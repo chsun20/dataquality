@@ -1,6 +1,9 @@
 -- 质控任务管理增量迁移。先备份平台元数据，在独立测试库验证后应用。
 -- 不重建、不清空既有表；列与索引均按 information_schema 判重，中断后可重新运行。
 -- 使用 mysql 客户端执行，当前数据库必须为目标平台库（ry-cloud）。
+-- mysql 客户端默认字符集可能是 latin1，显式声明避免中文注释被二次编码。
+SET NAMES utf8mb4;
+
 DELIMITER $$
 DROP PROCEDURE IF EXISTS dq_add_column_v3$$
 CREATE PROCEDURE dq_add_column_v3(IN table_arg varchar(64), IN column_arg varchar(64), IN definition_arg text)

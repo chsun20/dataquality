@@ -9,6 +9,9 @@
 --   3. admin 为超管，插入后即时可见；其他角色需在【系统管理-角色管理】中勾选授权
 -- ----------------------------
 
+-- mysql 客户端默认字符集可能是 latin1，显式声明避免中文菜单名被二次编码
+SET NAMES utf8mb4;
+
 DELETE FROM sys_menu WHERE menu_id BETWEEN 2000 AND 2099;
 
 -- 一级目录：数据质量

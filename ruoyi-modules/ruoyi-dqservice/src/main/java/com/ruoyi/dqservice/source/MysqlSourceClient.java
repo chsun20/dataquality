@@ -61,6 +61,9 @@ public class MysqlSourceClient
         p.setProperty("allowLoadLocalInfileInPath", "");
         p.setProperty("autoDeserialize", "false");
         p.setProperty("allowPublicKeyRetrieval", "false");
+        // 外部库的默认字符集可能是 latin1，不显式声明会导致元数据注释与中文数据取回为 ?
+        p.setProperty("useUnicode", "true");
+        p.setProperty("characterEncoding", "UTF-8");
         p.setProperty("useServerPrepStmts", "true");
         Connection connection = DriverManager.getConnection("jdbc:mysql://" + source.getHost() + ":"
                 + source.getPort() + "/" + source.getDatabaseName(), p);
