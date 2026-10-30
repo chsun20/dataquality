@@ -5,11 +5,11 @@ import com.ruoyi.dqservice.dto.ColInfo;
 import com.sch.order_rules.fact.Bank;
 
 import java.io.*;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
+import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Objects;
+import java.util.*;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
@@ -157,84 +157,216 @@ public class RuleParser {
         }
         rule.setCols(cols);
     }
+    private static final String[] BANK_FIELDS = {
+            "age", "job", "marital", "education", "isDefault", "balance", "housing", "loan",
+            "contact", "day", "month", "duration", "campaign", "pdays", "previous", "poutcome", "y"
+    };
+
+    public static Path bankOutputDirectory() {
+        return Paths.get(System.getProperty("bank.outputDir", "target/bank-experiment")).toAbsolutePath();
+    }
+
     public static void aprioriParser(String url) {
-        try {
-            ObjectInputStream ois = new ObjectInputStream(Files.newInputStream(Paths.get(url)));
-            List<Mymap> map = (List<Mymap>) ois.readObject();
-            StringBuilder rule = new StringBuilder();
-            rule.append("package com.sch.order_rules\nimport java.util.List\n");
-            for(int i = 0; i < map.size(); i++) {
-                List<String> tmp = map.get(i).li;
-                StringBuilder ruleContext = new StringBuilder();
-                ruleContext.append("rule \"rule").append(i).append("\"\nwhen $li: List()\n$bank:(");
-                for(int j = 0; j < tmp.size(); j++) {
-                    if(j != 0) ruleContext.append(" AND ");
-                    ruleContext.append(tmp.get(j));
-                }
-                ruleContext.append(") from $li\nthen\nend\n");
-                rule.append(ruleContext);
-            }
-            writeFile("bank.drl", rule.toString());
-        } catch (Exception e) {
-            e.printStackTrace();
+        generateBankDrl(Paths.get(url), bankOutputDirectory(), "original", false);
+    }
+
+    /** 读取本地实验生成的项集文件，规则 ID 独立于排序位置。 */
+    @SuppressWarnings("unchecked")
+    private static List<Mymap> readItemsets(Path input) {
+        try (ObjectInputStream stream = new ObjectInputStream(Files.newInputStream(input))) {
+            return (List<Mymap>) stream.readObject();
+        } catch (IOException | ClassNotFoundException e) {
+            throw new IllegalStateException("读取频繁项集失败：" + input, e);
         }
     }
+
+    /** L3 只改变规则声明顺序，L4 只改变同一 Bank 模式中的条件顺序。 */
+    public static String generateBankDrl(Path input, Path output, String variant, boolean diagnostic) {
+        if (!Arrays.asList("original", "l3-weak", "l3-strong", "l4-weak", "l4-strong").contains(variant)) {
+            throw new IllegalArgumentException("未知排序组：" + variant);
+        }
+        List<Mymap> items = readItemsets(input);
+        Map<String, Integer> singletonCounts = new HashMap<>();
+        List<Integer> order = new ArrayList<>();
+        for (int i = 0; i < items.size(); i++) {
+            order.add(i);
+            Mymap item = items.get(i);
+            if (item.li.size() == 1) singletonCounts.put(item.li.get(0), item.count);
+        }
+        boolean strong = variant.endsWith("strong");
+        if (variant.startsWith("l3")) {
+            Comparator<Integer> cmp = Comparator.comparingInt(i -> items.get(i).count);
+            order.sort(strong ? cmp : cmp.reversed());
+        }
+        StringBuilder drl = new StringBuilder("package bank.experiment\nimport java.util.List\n"
+                + "import com.sch.order_rules.fact.Bank\n");
+        if (diagnostic) drl.append("global java.util.Set matches\nglobal java.util.Map rowIds\n");
+        for (int index : order) {
+            List<String> predicates = new ArrayList<>(items.get(index).li);
+            if (variant.startsWith("l4")) {
+                Comparator<String> cmp = Comparator.comparingInt(p -> {
+                    Integer count = singletonCounts.get(p);
+                    if (count == null) throw new IllegalStateException("缺少单项支持度：" + p);
+                    return count;
+                });
+                predicates.sort(strong ? cmp : cmp.reversed());
+            }
+            drl.append("rule \"rule").append(index).append("\"\nwhen\n    $li: List()\n    $bank: Bank(")
+                    .append(String.join(" && ", predicates)).append(") from $li\nthen\n");
+            if (diagnostic) drl.append("    matches.add(\"rule").append(index)
+                    .append(":\" + rowIds.get($bank));\n");
+            drl.append("end\n\n");
+        }
+        String text = drl.toString();
+        writeFile(output.resolve(variant + (diagnostic ? "-check" : "") + ".drl").toString(), text);
+        return text;
+    }
+
+    /** 从独立的逐行集合判断取得期望命中身份，同时校验挖掘阶段的支持度。 */
+    public static Set<String> expectedBankMatches(Path input, String csv) {
+        List<Mymap> items = readItemsets(input);
+        List<List<String>> rows = bankTransactions(csv);
+        Set<String> matches = new HashSet<>();
+        for (int i = 0; i < items.size(); i++) {
+            int count = 0;
+            for (int row = 0; row < rows.size(); row++) {
+                if (rows.get(row).containsAll(items.get(i).li)) {
+                    matches.add("rule" + i + ":" + row);
+                    count++;
+                }
+            }
+            if (count != items.get(i).count) throw new IllegalStateException("支持度不一致：rule" + i);
+        }
+        return matches;
+    }
+
     public static void printFile(String url) {
         try {
-            ObjectInputStream ois = new ObjectInputStream(Files.newInputStream(Paths.get(url)));
-            System.out.println(ois.readObject().toString());
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-    public static <T> void writeFile(String url, T t) {
-        try {
-            ObjectOutputStream oos = new ObjectOutputStream(Files.newOutputStream(Paths.get(url)));
-            oos.writeObject(t);
-        } catch (Exception e) {
-            e.printStackTrace();
-        }
-    }
-    public static List<Bank> saveBankData(String url) {
-        List<Bank> list = new ArrayList<>();
-        try {
-            File file = new File(url);
-            if (file.isFile() && file.exists()) {
-                InputStreamReader read = new InputStreamReader(Files.newInputStream(file.toPath()));
-                BufferedReader bufferedReader = new BufferedReader(read);
-                String lineTXT = bufferedReader.readLine();
-                while ((lineTXT = bufferedReader.readLine()) != null) {
-                    Bank bank = new Bank();
-                    String[] line = lineTXT.split(";");
-                    if(line.length == 17) {
-                        bank.setAge(Integer.parseInt(line[0]));
-                        bank.setJob(line[1]);
-                        bank.setMarital(line[2]);
-                        bank.setEducation(line[3]);
-                        bank.setIsDefault(line[4]);
-                        bank.setBalance(Integer.parseInt(line[5]));
-                        bank.setHousing(line[6]);
-                        bank.setLoan(line[7]);
-                        bank.setContact(line[8]);
-                        bank.setDay(Integer.parseInt(line[9]));
-                        bank.setMonth(line[10]);
-                        bank.setDuration(Integer.parseInt(line[11]));
-                        bank.setCampaign(Integer.parseInt(line[12]));
-                        bank.setPdays(Integer.parseInt(line[13]));
-                        bank.setPrevious(Integer.parseInt(line[14]));
-                        bank.setPoutcome(line[15]);
-                        bank.setY(line[16]);
-                        list.add(bank);
-                    }
+            if (url.endsWith(".drl")) {
+                System.out.println(new String(Files.readAllBytes(Paths.get(url)), StandardCharsets.UTF_8));
+            } else {
+                try (ObjectInputStream stream = new ObjectInputStream(Files.newInputStream(Paths.get(url)))) {
+                    System.out.println(stream.readObject());
                 }
             }
-        } catch (Exception e) {
-            e.printStackTrace();
+        } catch (IOException | ClassNotFoundException e) {
+            throw new IllegalStateException("读取文件失败：" + url, e);
         }
-        writeFile("bankData", list);
-        return list;
     }
+
+    /** 文本按 UTF-8 输出，其余实验对象使用 Java 序列化。 */
+    public static <T> void writeFile(String url, T value) {
+        Path path = Paths.get(url).toAbsolutePath();
+        try {
+            Files.createDirectories(path.getParent());
+            if (value instanceof CharSequence) {
+                Files.write(path, value.toString().getBytes(StandardCharsets.UTF_8));
+            } else {
+                try (ObjectOutputStream stream = new ObjectOutputStream(Files.newOutputStream(path))) {
+                    stream.writeObject(value);
+                }
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException("写入文件失败：" + path, e);
+        }
+    }
+
+    /** 专用于 bank 的单行、分号分隔 CSV；严格核验表头和列数。 */
+    private static List<String[]> readBankCsv(String url) {
+        List<String[]> rows = new ArrayList<>();
+        try (BufferedReader reader = Files.newBufferedReader(Paths.get(url), StandardCharsets.UTF_8)) {
+            String header = reader.readLine();
+            if (header == null) throw new IllegalArgumentException("CSV 缺少表头");
+            String[] columns = bankCsvCells(header.replace("\uFEFF", ""));
+            String[] expected = BANK_FIELDS.clone();
+            expected[4] = "default";
+            if (!Arrays.equals(columns, expected)) throw new IllegalArgumentException("bank CSV 表头不匹配");
+            String text;
+            int line = 1;
+            while ((text = reader.readLine()) != null) {
+                line++;
+                if (text.trim().isEmpty()) continue;
+                String[] cells = bankCsvCells(text);
+                if (cells.length != BANK_FIELDS.length) throw new IllegalArgumentException("CSV 列数错误，行 " + line);
+                for (int i = 0; i < cells.length; i++) {
+                    if (bankNumeric(i)) {
+                        try {
+                            cells[i] = Integer.toString(Integer.parseInt(cells[i]));
+                        } catch (NumberFormatException e) {
+                            throw new IllegalArgumentException("CSV 整数错误，行 " + line + "，字段 " + BANK_FIELDS[i], e);
+                        }
+                    }
+                }
+                rows.add(cells);
+            }
+        } catch (IOException e) {
+            throw new UncheckedIOException("读取 CSV 失败：" + url, e);
+        }
+        return rows;
+    }
+
+    private static String[] bankCsvCells(String line) {
+        String[] cells = line.split(";(?=(?:[^\"]*\"[^\"]*\")*[^\"]*$)", -1);
+        for (int i = 0; i < cells.length; i++) {
+            String cell = cells[i].trim();
+            if (!cell.matches("\"(?:[^\"]|\"\")*\"|[^\";]*")) {
+                throw new IllegalArgumentException("CSV 引号格式错误");
+            }
+            cells[i] = cell.startsWith("\"") ? cell.substring(1, cell.length() - 1).replace("\"\"", "\"") : cell;
+        }
+        return cells;
+    }
+
+    private static boolean bankNumeric(int index) {
+        return index == 0 || index == 5 || index == 9 || (index >= 11 && index <= 14);
+    }
+
+    public static List<List<String>> bankTransactions(String url) {
+        List<List<String>> transactions = new ArrayList<>();
+        for (String[] row : readBankCsv(url)) {
+            List<String> items = new ArrayList<>();
+            for (int i = 0; i < row.length; i++) {
+                String literal = bankNumeric(i) ? row[i] : "\"" + escape(row[i]) + "\"";
+                items.add(BANK_FIELDS[i] + "==" + literal);
+            }
+            transactions.add(items);
+        }
+        return transactions;
+    }
+
+    public static List<Bank> saveBankData(String url) {
+        return saveBankData(url, bankOutputDirectory());
+    }
+
+    public static List<Bank> saveBankData(String url, Path output) {
+        List<Bank> banks = new ArrayList<>();
+        for (String[] row : readBankCsv(url)) {
+            Bank bank = new Bank();
+            bank.setAge(Integer.parseInt(row[0]));
+            bank.setJob(row[1]);
+            bank.setMarital(row[2]);
+            bank.setEducation(row[3]);
+            bank.setIsDefault(row[4]);
+            bank.setBalance(Integer.parseInt(row[5]));
+            bank.setHousing(row[6]);
+            bank.setLoan(row[7]);
+            bank.setContact(row[8]);
+            bank.setDay(Integer.parseInt(row[9]));
+            bank.setMonth(row[10]);
+            bank.setDuration(Integer.parseInt(row[11]));
+            bank.setCampaign(Integer.parseInt(row[12]));
+            bank.setPdays(Integer.parseInt(row[13]));
+            bank.setPrevious(Integer.parseInt(row[14]));
+            bank.setPoutcome(row[15]);
+            bank.setY(row[16]);
+            banks.add(bank);
+        }
+        writeFile(output.resolve("bank-data.ser").toString(), banks);
+        return banks;
+    }
+
     public static void main(String[] args) {
-        printFile("bank.drl");
+        if (args.length != 2) throw new IllegalArgumentException("用法：RuleParser <项集文件> <输出目录>");
+        generateBankDrl(Paths.get(args[0]), Paths.get(args[1]), "original", false);
     }
 }

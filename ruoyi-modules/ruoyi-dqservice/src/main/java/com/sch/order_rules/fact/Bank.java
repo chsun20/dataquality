@@ -3,7 +3,9 @@ package com.sch.order_rules.fact;
 import lombok.Data;
 
 @Data
-public class Bank {
+public class Bank implements java.io.Serializable {
+    private static final long serialVersionUID = 1L;
+
     private int age;
     private String job;
     private String marital;

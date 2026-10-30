@@ -20,72 +20,53 @@ public class AprioriMyself {
     static  List<List<String>> frequentItemset=new ArrayList<>();//存储所有的频繁项集
     static List<Mymap> map = new ArrayList<>();//存放频繁项集和对应的支持度技术
 
-    public static void main(String[] args){
+    private static int maxItemSize = 17;
 
-        System.out.println("请输入最小支持度（如0.05）和最小置信度（如0.6）");
-        Scanner in=new Scanner(System.in);
-        MIN_SUPPROT=in.nextDouble();
-        MIN_CONFIDENCE=in.nextDouble();
+    /** 参数：CSV 路径、输出目录、最小支持度、最大项集长度。 */
+    public static void main(String[] args) throws IOException {
+        if (args.length != 4) {
+            throw new IllegalArgumentException("用法：AprioriMyself <bank.csv> <输出目录> <支持度> <最大项集长度>");
+        }
+        int count = mine(args[0], Paths.get(args[1]), Double.parseDouble(args[2]), Integer.parseInt(args[3]));
+        System.out.println("已保存频繁项集：" + count);
+    }
 
-
-        /*************读取数据集**************/
-        record = getRecord("C:\\Users\\TUF\\Downloads\\bank\\bank.csv");
-        //控制台输出记录
-        System.out.println("读取数据集record成功===================================");
-//        ShowData(record);
-
-
-        Apriori();//调用Apriori算法获得频繁项集
-        System.out.println("频繁模式挖掘完毕。\n\n\n\n\n进行关联度挖掘，最小支持度百分比为："+MIN_SUPPROT+"  最小置信度为："+MIN_CONFIDENCE);
-
-        AssociationRulesMining();//挖掘关联规则
-        System.out.println(map.size());
-        writeMyMap(map);
+    /** 仅挖掘 DRL 所需的频繁项集；关联规则置信度计算保留为独立入口。 */
+    public static synchronized int mine(String csv, java.nio.file.Path output, double support, int maxItems)
+            throws IOException {
+        if (!Double.isFinite(support) || support <= 0 || support > 1 || maxItems < 1 || maxItems > 17) {
+            throw new IllegalArgumentException("支持度须在 (0,1]，项集长度须在 [1,17]");
+        }
+        times = 0;
+        endTag = false;
+        frequentItemset.clear();
+        map.clear();
+        MIN_SUPPROT = support;
+        maxItemSize = maxItems;
+        record = getRecord(csv);
+        if (record.isEmpty()) throw new IllegalArgumentException("bank 数据集为空");
+        Apriori();
+        Files.createDirectories(output);
+        RuleParser.writeFile(output.resolve("bank-itemsets.ser").toString(), map);
+        List<String> lines = new ArrayList<>();
+        lines.add("rule_id\titem_count\tsupport_count\tsupport\tconditions");
+        for (int i = 0; i < map.size(); i++) {
+            Mymap item = map.get(i);
+            lines.add("rule" + i + "\t" + item.li.size() + "\t" + item.count + "\t"
+                    + (item.count * 1.0 / record.size()) + "\t" + String.join(" && ", item.li));
+        }
+        Files.write(output.resolve("itemsets.tsv"), lines, java.nio.charset.StandardCharsets.UTF_8);
+        return map.size();
     }
 
     public static void writeMyMap(List<Mymap> mymap) {
-        try{
-            ObjectOutputStream oos = new ObjectOutputStream(Files.newOutputStream(Paths.get("bank")));
-            oos.writeObject(mymap);
-        } catch (IOException e) {
-            throw new RuntimeException(e);
-        }
+        RuleParser.writeFile(RuleParser.bankOutputDirectory().resolve("bank-itemsets.ser").toString(), mymap);
     }
 
     /**********************************************
      * ****************读取数据********************/
     public static List<List<String>> getRecord(String url) {
-        List<List<String>> record = new ArrayList<List<String>>();
-        try {
-            String encoding = "UTF-8"; // 字符编码(可解决中文乱码问题 )
-            File file = new File(url);
-            if (file.isFile() && file.exists()) {
-                InputStreamReader read = new InputStreamReader(
-                        Files.newInputStream(file.toPath()), encoding);
-                BufferedReader bufferedReader = new BufferedReader(read);
-                String lineTXT = bufferedReader.readLine();
-                String[] lineHead = lineTXT.replace("\"", "").split(";");
-                StringBuilder sb;
-                while ((lineTXT = bufferedReader.readLine()) != null) {//读一行文件
-                    String[] lineString = lineTXT.split(";");
-                    List<String> lineList = new ArrayList<String>();
-                    for (int i = 0; i < lineString.length; i++) {
-                        sb = new StringBuilder();
-                        sb.append(lineHead[i]).append("==").append(lineString[i]);
-                        lineList.add(sb.toString());
-                    }
-                    record.add(lineList);
-                }
-
-                read.close();
-            } else {
-                System.out.println("找不到指定的文件！");
-            }
-        } catch (Exception e) {
-            System.out.println("读取文件内容操作出错");
-            e.printStackTrace();
-        }
-        return record;
+        return RuleParser.bankTransactions(url);
     }
 
 
@@ -110,7 +91,7 @@ public class AprioriMyself {
 
         //*****************************迭代过程**********************************
         times=2;
-        while(endTag!=true){
+        while(endTag!=true && times <= maxItemSize){
 
             System.out.println("*******************************第"+times+"次扫描后备选集");
             //**********连接操作****获取候选times项集**************
@@ -288,7 +269,7 @@ public class AprioriMyself {
                 int hsLength_after = hsSet.size();
                 if(hsLength_before+1 == hsLength_after && isnotHave(hsSet,nextCandidateItemset)){
                     //如果不相等，表示添加了1个新的元素       同时判断其不是候选集中已经存在的一项
-                    Iterator<String> itr = hsSet.iterator();
+                    Iterator<String> itr = new TreeSet<>(hsSet).iterator();
                     List<String>  tempList = new ArrayList<String>();
                     while(itr.hasNext()){
                         String Item = (String) itr.next();
@@ -310,7 +291,7 @@ public class AprioriMyself {
      */
     private static boolean isnotHave(HashSet<String> hsSet, List<List<String>> nextCandidateItemset) {//判断hsset是不是candidateitemset中的一项
         List<String>  tempList = new ArrayList<String>();
-        Iterator<String> itr = hsSet.iterator();
+        Iterator<String> itr = new TreeSet<>(hsSet).iterator();
         while(itr.hasNext()){//将hsset转换为List<String>
             String Item = (String) itr.next();
             tempList.add(Item);
@@ -336,7 +317,7 @@ public class AprioriMyself {
 
             int count = countFrequent1(CandidateItemset.get(i));//统计记录数
 
-            if (count >= MIN_SUPPROT * (record.size()-1)){
+            if (count >= Math.ceil(MIN_SUPPROT * record.size())){
                 supportedItemset.add(CandidateItemset.get(i));
                 map.add(new Mymap(CandidateItemset.get(i),count));//存储当前频繁项集以及它的支持度计数
                 end = false;
@@ -385,12 +366,12 @@ public class AprioriMyself {
         List<List<String>> tableList = new ArrayList<List<String>>();
         HashSet<String> hs  = new HashSet<String>();//新建一个hash表，存放所有的不同的一维数据
 
-        for (int i = 1; i<record.size(); i++){  //遍历所有的数据集，找出所有的不同的商品存放到hs中
-            for(int j=1;j<record.get(i).size();j++){
+        for (int i = 0; i<record.size(); i++){  //遍历所有的数据集，找出所有的不同的商品存放到hs中
+            for(int j=0;j<record.get(i).size();j++){
                 hs.add(record.get(i).get(j));
             }
         }
-        Iterator<String> itr = hs.iterator();
+        Iterator<String> itr = new TreeSet<>(hs).iterator();
         while(itr.hasNext()){
             List<String>  tempList = new ArrayList<String>();
             String Item = (String) itr.next();
