@@ -3,6 +3,9 @@ package com.ruoyi.dqservice.template;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ruoyi.common.core.exception.ServiceException;
+import com.ruoyi.dqservice.template.plan.CompoundCheckPlan;
+import com.ruoyi.dqservice.template.plan.CompoundCheckRuntime;
+import com.ruoyi.dqservice.template.plan.CompoundMode;
 import com.ruoyi.dqservice.util.RuleParser;
 import com.ruoyi.dqservice.util.QualityStatistics;
 import java.math.BigDecimal;
@@ -25,6 +28,9 @@ public final class QualityExecutionContext
     private final Map<String, Pattern> regexPatterns = new HashMap<>();
     private final Map<String, Set<String>> enumValues = new HashMap<>();
     private final Map<String, Map<List<Object>, Integer>> groups = new HashMap<>();
+    private final Map<String, CompoundCheckRuntime> compoundChecks = new LinkedHashMap<>();
+    private CompoundMode compoundMode;
+    private boolean nativeCountingCompleted;
     private static final ObjectMapper JSON = new ObjectMapper();
 
     public QualityExecutionContext(Instant detectedAt, Collection<Map<String, Object>> rows)
@@ -70,6 +76,120 @@ public final class QualityExecutionContext
         counter.skipped += skipped;
         counter.checked += rows.size() - skipped;
         counter.violations += summary.getResultsByCheck().getOrDefault(check.getCheckId(), 0);
+    }
+
+    // ---------------------------------------------------------------- 复合检查原型入口
+
+    /**
+     * 注册一项复合检查。
+     *
+     * 本轮执行只允许一种执行表示；DRL 内必须带有与计划一致的指纹，避免计划与编译产物错配。
+     * 空输入也会预注册零计数，使 checked 口径与执行行数一致，而 passRate 仍为 null。
+     */
+    public void registerCompound(CompoundCheckPlan plan, String drl, CompoundMode mode)
+    {
+        Objects.requireNonNull(plan, "plan");
+        Objects.requireNonNull(mode, "mode");
+        if (compoundMode != null && compoundMode != mode)
+            throw new ServiceException("本轮执行不能混用复合检查的执行表示");
+        if (drl == null || drl.indexOf(plan.getFingerprint()) < 0)
+            throw new ServiceException("DRL 与复合检查计划指纹不一致：" + plan.getCheckId());
+        CompoundCheckRuntime existing = compoundChecks.get(plan.getCheckId());
+        if (existing != null)
+        {
+            if (!existing.getPlan().getFingerprint().equals(plan.getFingerprint()))
+                throw new ServiceException("复合检查标识冲突：" + plan.getCheckId());
+            return;
+        }
+        compoundMode = mode;
+        if (compoundChecks.size() >= CompoundCheckPlan.MAX_COMPOUND_CHECKS)
+            throw new ServiceException("单次执行最多注册 " + CompoundCheckPlan.MAX_COMPOUND_CHECKS + " 项复合检查");
+        compoundChecks.put(plan.getCheckId(), new CompoundCheckRuntime(plan, mode));
+        register(plan.getCheckId(), plan.getTemplateCode(), plan.getField(), plan.getDimension());
+    }
+
+    /** 原生组：由 Drools 约束逐原子调用，不计入逐谓词诊断。 */
+    public boolean holds(String checkId, String predicateId, Map<String, Object> row)
+    {
+        return runtime(checkId, CompoundMode.NATIVE).holds(predicateId, row, false);
+    }
+
+    /** 诊断版原生组：额外累计每个原子的调用次数。 */
+    public boolean holdsDiagnostic(String checkId, String predicateId, Map<String, Object> row)
+    {
+        return runtime(checkId, CompoundMode.NATIVE).holds(predicateId, row, true);
+    }
+
+    public void evaluateCompound(String checkId, Map<String, Object> row, List<Map<String, Object>> results)
+    {
+        evaluateCompound(checkId, row, results, false);
+    }
+
+    public void evaluateCompoundDiagnostic(String checkId, Map<String, Object> row, List<Map<String, Object>> results)
+    {
+        evaluateCompound(checkId, row, results, true);
+    }
+
+    /**
+     * 显式组：每行 checked 加一，任一条件为 false 立即停止，全部成立才输出一条明细。
+     * 被前置条件拦住不等于跳过，因此不计 skipped。
+     */
+    private void evaluateCompound(String checkId, Map<String, Object> row, List<Map<String, Object>> results,
+            boolean diagnostic)
+    {
+        CompoundCheckRuntime runtime = runtime(checkId, CompoundMode.EXPLICIT);
+        Counter counter = counters.get(checkId);
+        counter.checked++;
+        if (runtime.evaluateWhole(row, diagnostic))
+        {
+            counter.violations++;
+            results.add(runtime.detail(row));
+        }
+    }
+
+    /** 原生组 then 块只记录命中，不计 checked。 */
+    public void recordCompoundHit(String checkId, Map<String, Object> row, List<Map<String, Object>> results)
+    {
+        CompoundCheckRuntime runtime = runtime(checkId, CompoundMode.NATIVE);
+        counters.get(checkId).violations++;
+        results.add(runtime.detail(row));
+    }
+
+    /** 原生组运行结束后一次性补齐本轮 checked；只能完成一次，不重复累计。 */
+    public void completeNativeCounting(int totalRows)
+    {
+        if (totalRows < 0) throw new ServiceException("扫描行数不能为负数");
+        if (nativeCountingCompleted) throw new ServiceException("原生统计只能完成一次");
+        for (CompoundCheckRuntime runtime : compoundChecks.values())
+        {
+            if (runtime.getMode() != CompoundMode.NATIVE) continue;
+            runtime.completeNativeCounting();
+            counters.get(runtime.getPlan().getCheckId()).checked += totalRows;
+        }
+        nativeCountingCompleted = true;
+    }
+
+    /** 逐原子调用次数快照，仅供诊断；不参与业务计数。 */
+    public Map<String, Map<String, Integer>> getCompoundCalls()
+    {
+        Map<String, Map<String, Integer>> snapshot = new LinkedHashMap<>();
+        for (CompoundCheckRuntime runtime : compoundChecks.values())
+            snapshot.put(runtime.getPlan().getCheckId(), runtime.getCalls());
+        return snapshot;
+    }
+
+    public Map<String, CompoundCheckRuntime> getCompoundChecks()
+    {
+        return new LinkedHashMap<>(compoundChecks);
+    }
+
+    private CompoundCheckRuntime runtime(String checkId, CompoundMode mode)
+    {
+        CompoundCheckRuntime runtime = compoundChecks.get(checkId);
+        if (runtime == null) throw new ServiceException("复合检查未注册：" + checkId);
+        if (runtime.getMode() != mode)
+            throw new ServiceException("复合检查执行表示与 DRL 不一致：" + checkId);
+        return runtime;
     }
 
     /** 仅缓存参数，不缓存行的求值结果；由 DRL 的非空保护后调用。 */

@@ -32,7 +32,8 @@ import org.springframework.stereotype.Component;
 public class CompiledRuleCache
 {
     // 辅助实现或编译选项改变时同时更新指纹；进程重启也会自然清空缓存。
-    private static final String FINGERPRINT = "drools=7.5.0.Final;helpers=l5-v1;builder=default";
+    // l5-v2：新增复合检查原型入口（holds / evaluateCompound / recordCompoundHit）。
+    private static final String FINGERPRINT = "drools=7.5.0.Final;helpers=l5-v2;builder=default";
     private final boolean enabled;
     private final Cache<String, CompiledRule> cache;
     private final AtomicLong buildSuccess = new AtomicLong();
