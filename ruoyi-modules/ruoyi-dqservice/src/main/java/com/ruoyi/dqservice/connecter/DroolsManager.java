@@ -9,10 +9,9 @@ import org.kie.api.KieServices;
 import org.kie.api.builder.*;
 import org.kie.api.builder.model.KieBaseModel;
 import org.kie.api.builder.model.KieModuleModel;
-import org.kie.api.io.ResourceType;
 import org.kie.api.runtime.KieContainer;
 import org.kie.api.runtime.KieSession;
-import org.kie.internal.utils.KieHelper;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import java.util.ArrayList;
@@ -23,6 +22,17 @@ import java.util.Map;
 @Component
 @Slf4j
 public class DroolsManager {
+    private final CompiledRuleCache compiledRules;
+
+    public DroolsManager() {
+        this(new CompiledRuleCache());
+    }
+
+    @Autowired
+    public DroolsManager(CompiledRuleCache compiledRules) {
+        this.compiledRules = compiledRules;
+    }
+
     // 此类本身就是单例的
     private final KieServices kieServices = KieServices.get();
 
@@ -141,24 +151,7 @@ public class DroolsManager {
      */
     public void verifyDrl(String drl)
     {
-        KieHelper kieHelper = new KieHelper();
-        kieHelper.addContent(drl, ResourceType.DRL);
-        Results results = kieHelper.verify();
-        List<Message> errors = results.getMessages(Message.Level.ERROR);
-        if (errors != null && !errors.isEmpty())
-        {
-            StringBuilder detail = new StringBuilder();
-            for (Message message : errors)
-            {
-                if (detail.length() > 0)
-                {
-                    detail.append("; ");
-                }
-                detail.append(message.getText());
-            }
-            log.error("规则编译失败: {}", detail);
-            throw new ServiceException("规则编译失败：" + detail);
-        }
+        compiledRules.verify(drl);
     }
 
     /**
@@ -166,8 +159,8 @@ public class DroolsManager {
      *
      * 与 fireRule 的区别：
      * 1. 支持任意数量的 Map fact（每条数据库记录一个 Map），而非单个 Integer；
-     * 2. 每次调用用独立的 KieHelper 编译，不写入全局 KieFileSystem，
-     *    因此单条规则语法错误不会影响其它规则，规则修改也能立即生效；
+     * 2. 按完整 DRL 复用只读编译产物，每次使用独立 session，不写入旧 KieFileSystem，
+     *    因此单条规则语法错误不会影响其它规则，内容修改后立即使用新的编译产物；
      * 3. 通过 global 集合 violations 回收 then 块产出的违规详情。
      *
      * @param drl   待执行的 DRL 文本
@@ -180,23 +173,15 @@ public class DroolsManager {
 
     public List<Map<String, Object>> fireRules(String drl, Collection<Map<String, Object>> facts,
             QualityExecutionContext context) {
-        KieHelper kieHelper = new KieHelper();
-        kieHelper.addContent(drl, ResourceType.DRL);
-
-        Results results = kieHelper.verify();
-        List<Message> errors = results.getMessages(Message.Level.ERROR);
-        if (errors != null && !errors.isEmpty()) {
-            StringBuilder detail = new StringBuilder();
-            for (Message message : errors) {
-                detail.append(message.getText()).append("; ");
-            }
-            log.error("规则编译失败: {}", detail);
-            throw new ServiceException("规则编译失败: " + detail);
-        }
-
+        long started = System.nanoTime();
+        CompiledRuleCache.CompiledRule compiled = compiledRules.get(drl);
+        long compileNs = System.nanoTime() - started;
+        long sessionNs = 0, insertNs = 0, fireNs = 0;
         KieSession kieSession = null;
         try {
-            kieSession = kieHelper.build().newKieSession();
+            started = System.nanoTime();
+            kieSession = compiled.getBase().newKieSession();
+            sessionNs = System.nanoTime() - started;
             List<Map<String, Object>> violations = new ArrayList<>();
             try
             {
@@ -207,17 +192,25 @@ public class DroolsManager {
                 // 手写 DRL 没有声明 global 时给出可读提示，而不是抛裸异常
                 throw new ServiceException("规则未声明 global java.util.List violations，无法收集违规结果");
             }
-            boolean usesContext = kieSession.getKieBase().getKiePackages().stream()
-                    .flatMap(p -> p.getGlobalVariables().stream()).anyMatch(g -> "qualityContext".equals(g.getName()));
-            if (usesContext) kieSession.setGlobal("qualityContext", context);
+            if (compiled.isUsesContext()) kieSession.setGlobal("qualityContext", context);
+            started = System.nanoTime();
             for (Map<String, Object> fact : facts) {
                 kieSession.insert(fact);
             }
-            kieSession.fireAllRules();
+            insertNs = System.nanoTime() - started;
+            started = System.nanoTime();
+            try {
+                kieSession.fireAllRules();
+            } finally {
+                fireNs = System.nanoTime() - started;
+            }
             return violations;
         } finally {
-            if (kieSession != null) {
-                kieSession.dispose();
+            try {
+                if (kieSession != null) kieSession.dispose();
+            } finally {
+                log.debug("规则执行阶段：rows={}，compile_lookup_ns={}，session_ns={}，insert_ns={}，fire_ns={}",
+                        facts.size(), compileNs, sessionNs, insertNs, fireNs);
             }
         }
     }

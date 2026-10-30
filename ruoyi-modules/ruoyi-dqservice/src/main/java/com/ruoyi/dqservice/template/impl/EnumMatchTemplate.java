@@ -53,17 +53,16 @@ public class EnumMatchTemplate implements RuleTemplate
     public String buildRule(String ruleName, String field, String columnType, Map<String, String> params)
     {
         String raw = DrlSupport.requiredParam(params, "values", "允许取值");
-        String list = Arrays.stream(raw.split(","))
+        List<String> allowed = Arrays.stream(raw.split(","))
                 .map(String::trim)
                 .filter(s -> !s.isEmpty())
-                .map(s -> "\"" + DrlSupport.escape(s) + "\"")
-                .collect(Collectors.joining(", "));
-        if (list.isEmpty())
+                .collect(Collectors.toList());
+        if (allowed.isEmpty())
         {
             throw new com.ruoyi.common.core.exception.ServiceException("枚举值校验至少需要一个允许取值");
         }
         String ref = DrlSupport.fieldRef(field);
-        String condition = ref + " != null && !java.util.Arrays.asList(" + list + ").contains("
+        String condition = ref + " != null && !qualityContext.matchesEnum(\"" + DrlSupport.escape(raw) + "\", "
                 + ref + ".toString())";
         return DrlSupport.ruleBlock(ruleName, field, "enum", condition);
     }

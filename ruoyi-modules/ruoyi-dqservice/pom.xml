@@ -83,6 +83,13 @@
 			<scope>test</scope>
 		</dependency>
 
+		<!-- Java 8 兼容的执行编译产物缓存 -->
+		<dependency>
+			<groupId>com.github.ben-manes.caffeine</groupId>
+			<artifactId>caffeine</artifactId>
+			<version>2.9.3</version>
+		</dependency>
+
 		<!--drools规则引擎-->
 		<dependency>
 			<groupId>org.drools</groupId>

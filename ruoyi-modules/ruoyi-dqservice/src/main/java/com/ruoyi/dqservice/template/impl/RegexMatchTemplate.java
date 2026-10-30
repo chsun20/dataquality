@@ -54,8 +54,8 @@ public class RegexMatchTemplate implements RuleTemplate
     {
         String pattern = DrlSupport.requiredParam(params, "pattern", "正则表达式");
         String ref = DrlSupport.fieldRef(field);
-        String condition = ref + " != null && !" + ref + ".toString().matches(\""
-                + DrlSupport.escape(pattern) + "\")";
+        String condition = ref + " != null && !qualityContext.matchesRegex(\""
+                + DrlSupport.escape(pattern) + "\", " + ref + ".toString())";
         return DrlSupport.ruleBlock(ruleName, field, "regex", condition);
     }
 }

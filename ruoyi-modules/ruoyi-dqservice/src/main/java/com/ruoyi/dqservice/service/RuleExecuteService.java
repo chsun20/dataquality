@@ -13,14 +13,12 @@ import java.sql.Timestamp;
 import java.util.Collections;
 import java.util.stream.Collectors;
 import com.ruoyi.dqservice.mapper.RuleMapper;
-import com.ruoyi.dqservice.util.RuleParser;
 import com.ruoyi.dqservice.util.QualityStatistics;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -119,6 +117,8 @@ public class RuleExecuteService
         List<Map<String, Object>> results = Collections.emptyList();
         List<Map<String, Object>> violations = Collections.emptyList();
         List<Map<String, Object>> unverifiable = Collections.emptyList();
+        List<Map<String, Object>> fieldStatistics = Collections.emptyList();
+        long aggregateNs = 0;
         String stage = "数据源连接或元数据复验";
         // 参数与权限预校验已完成；此后所有运行失败均产生 FAILED 报告。
         try (MysqlSourceClient.Session session = mysql.session(external))
@@ -137,26 +137,31 @@ public class RuleExecuteService
             if (!generated) for (Map<String, Object> row : rows)
                 row.replaceAll((key, value) -> value instanceof LocalDateTime ? Timestamp.valueOf((LocalDateTime) value) : value);
             QualityExecutionContext context = new QualityExecutionContext(detectedAt, rows);
+            List<TemplateCheck> legacyChecks = new ArrayList<>();
             if (generated) for (TemplateCheck check : checks)
-                context.register(check.getCheckId(), check.getTemplate(), check.getField(), registry.get(check.getTemplate()).getQualityDimension().name());
+            {
+                RuleTemplate template = registry.get(check.getTemplate());
+                context.register(check.getCheckId(), check.getTemplate(), check.getField(), template.getQualityDimension().name());
+                if (!(template instanceof ContextRuleTemplate)) legacyChecks.add(check);
+            }
             stage = "参考数据准备";
             snapshot.put("references", references.load(session, table, checks, rows, context));
             session.checkBudget();
             stage = "规则执行或结果校验";
             results = droolsManager.fireRules(drl, rows, context);
+            long aggregateStarted = System.nanoTime();
             // 对所有明细规范化行号，无法核验也必须指向真实源记录。
-            QualityStatistics.countViolationRows(results, rows.size());
-            fillRowDetail(results, rows);
-            violations = results.stream().filter(r -> !"UNVERIFIABLE".equals(r.get("resultType"))).collect(Collectors.toList());
-            unverifiable = results.stream().filter(r -> "UNVERIFIABLE".equals(r.get("resultType"))).collect(Collectors.toList());
-            if (generated) for (TemplateCheck check : checks)
-            {
-                RuleTemplate template = registry.get(check.getTemplate());
-                if (!(template instanceof ContextRuleTemplate)) context.countLegacyTemplate(check, template.getQualityDimension().name(), results);
-            }
+            QualityStatistics.Summary summary = QualityStatistics.aggregate(results, rows,
+                    legacyChecks.stream().map(TemplateCheck::getField).collect(Collectors.toSet()));
+            violations = summary.getViolations();
+            unverifiable = summary.getUnverifiable();
+            fieldStatistics = summary.getFieldStats();
+            for (TemplateCheck check : legacyChecks)
+                context.countLegacyTemplate(check, registry.get(check.getTemplate()).getQualityDimension().name(), summary);
             record.setCheckCounts(generated ? QualityJson.write(context.getCounters()) : null);
             record.setViolationCount(violations.size());
-            record.setViolationRows(QualityStatistics.countViolationRows(violations, rows.size()));
+            record.setViolationRows(summary.getViolationRows());
+            aggregateNs = System.nanoTime() - aggregateStarted;
             record.setUnverifiableCount(unverifiable.size());
             record.setEvaluationStatus(rows.isEmpty() ? "NO_DATA" : unverifiable.isEmpty() ? "SUCCESS" : "PARTIAL");
             record.setPassRate("SUCCESS".equals(record.getEvaluationStatus())
@@ -172,13 +177,23 @@ public class RuleExecuteService
             record.setViolationRows(0);
             record.setUnverifiableCount(0);
             record.setCheckCounts(null);
-            results = violations = unverifiable = Collections.emptyList();
+            results = violations = unverifiable = fieldStatistics = Collections.emptyList();
             log.warn("规则执行失败：ruleId={}，阶段={}", ruleId, stage);
         }
         record.setCostMs(java.util.concurrent.TimeUnit.NANOSECONDS.toMillis(System.nanoTime() - started));
         record.setConfigSnapshot(QualityJson.write(snapshot));
         // 持久化失败单独向上传递，不得把未保存的报告包装为成功。
-        Long executionId = reportService.saveEvaluation(record, results);
+        Long executionId;
+        long persistStarted = System.nanoTime();
+        try
+        {
+            executionId = reportService.saveEvaluation(record, results);
+        }
+        finally
+        {
+            log.debug("质控执行阶段：ruleId={}，aggregate_ns={}，persist_ns={}，total_ns={}",
+                    ruleId, aggregateNs, System.nanoTime() - persistStarted, System.nanoTime() - started);
+        }
         Map<String, Object> result = new LinkedHashMap<>();
         result.put("executionId", executionId);
         result.put("ruleId", record.getRuleId());
@@ -199,55 +214,10 @@ public class RuleExecuteService
         result.put("scanNote", record.getScanNote());
         result.put("configSnapshot", record.getConfigSnapshot());
         result.put("checkCounts", record.getCheckCounts());
-        result.put("fieldStats", fieldStats(violations));
+        result.put("fieldStats", fieldStatistics);
         result.put("violations", violations);
         result.put("unverifiable", unverifiable);
         return result;
     }
 
-    /**
-     * 把违规明细关联回原始记录，前端可直接展示「哪一行、哪个字段」对应的数据
-     */
-    private void fillRowDetail(List<Map<String, Object>> violations, List<Map<String, Object>> rows)
-    {
-        if (violations == null || violations.isEmpty())
-        {
-            return;
-        }
-        Map<Object, Map<String, Object>> rowIndex = new HashMap<>();
-        for (Map<String, Object> row : rows)
-        {
-            rowIndex.put(row.get(RuleParser.ROW_ID_KEY), row);
-        }
-        for (Map<String, Object> violation : violations)
-        {
-            Map<String, Object> row = rowIndex.get(violation.get("rowId"));
-            if (row != null)
-            {
-                violation.put("row", row);
-            }
-        }
-    }
-
-    /** 按字段聚合违规条数，按条数降序，供报告画图 */
-    private List<Map<String, Object>> fieldStats(List<Map<String, Object>> violations)
-    {
-        Map<String, Integer> counter = new LinkedHashMap<>();
-        for (Map<String, Object> violation : violations)
-        {
-            Object field = violation.get("field");
-            String key = field == null ? "unknown" : field.toString();
-            counter.merge(key, 1, Integer::sum);
-        }
-        List<Map<String, Object>> stats = new ArrayList<>();
-        for (Map.Entry<String, Integer> entry : counter.entrySet())
-        {
-            Map<String, Object> item = new LinkedHashMap<>();
-            item.put("field", entry.getKey());
-            item.put("count", entry.getValue());
-            stats.add(item);
-        }
-        stats.sort((a, b) -> ((Integer) b.get("count")).compareTo((Integer) a.get("count")));
-        return stats;
-    }
 }

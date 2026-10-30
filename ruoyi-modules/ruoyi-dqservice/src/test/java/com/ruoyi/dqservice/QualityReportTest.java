@@ -15,6 +15,16 @@ import org.apache.ibatis.session.Configuration;
 import org.apache.ibatis.type.JdbcType;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.ValueSource;
+import org.springframework.aop.framework.ProxyFactory;
+import org.springframework.transaction.TransactionDefinition;
+import org.springframework.transaction.annotation.AnnotationTransactionAttributeSource;
+import org.springframework.transaction.interceptor.TransactionInterceptor;
+import org.springframework.transaction.support.AbstractPlatformTransactionManager;
+import org.springframework.transaction.support.DefaultTransactionStatus;
+import java.util.ArrayList;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.mockito.ArgumentCaptor;
 import org.springframework.test.util.ReflectionTestUtils;
 
@@ -197,6 +207,69 @@ class QualityReportTest
             assertNull(record.getPassRate());
         }
         verifyNoInteractions(details);
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {0, 1, 200, 201, 401})
+    void bothSavePathsConvertOnlyTheCurrentBatchAndPreserveOrder(int count)
+    {
+        for (boolean legacy : new boolean[]{false, true})
+        {
+            reset(details);
+            AtomicInteger converted = new AtomicInteger();
+            List<Integer> savedIds = new ArrayList<>();
+            List<Map<String, Object>> input = new ArrayList<>();
+            for (int i = 1; i <= count; i++)
+            {
+                final int id = i;
+                Map<String, Object> item = violation(new Object() {
+                    @Override public String toString() { converted.incrementAndGet(); return "值" + id; }
+                });
+                item.put("rowId", id);
+                input.add(item);
+            }
+            when(details.insertViolationBatch(any())).thenAnswer(call -> {
+                List<ExecutionViolation> batch = call.getArgument(0);
+                assertTrue(batch.size() <= 200);
+                assertEquals(savedIds.size() + batch.size(), converted.get());
+                for (ExecutionViolation item : batch) savedIds.add(item.getRowId());
+                return batch.size();
+            });
+            if (legacy) service.saveExecution(rule(), "sample", count, count, count == 0 ? null : 0.0, 1, input);
+            else
+            {
+                ExecutionRecord record = record(count, count == 0 ? null : 0.0);
+                record.setEvaluationStatus(count == 0 ? "NO_DATA" : "SUCCESS");
+                service.saveEvaluation(record, input);
+            }
+            assertEquals(count, converted.get());
+            assertEquals(count, savedIds.size());
+            for (int i = 0; i < count; i++) assertEquals(Integer.valueOf(i + 1), savedIds.get(i));
+            verify(details, times((count + 199) / 200)).insertViolationBatch(any());
+        }
+    }
+
+    @Test
+    void laterBatchFailurePropagatesAndRollsBackThroughTransactionalProxy()
+    {
+        AtomicInteger rollbacks = new AtomicInteger();
+        AbstractPlatformTransactionManager transactions = new AbstractPlatformTransactionManager() {
+            @Override protected Object doGetTransaction() { return new Object(); }
+            @Override protected void doBegin(Object transaction, TransactionDefinition definition) { }
+            @Override protected void doCommit(DefaultTransactionStatus status) { fail("失败报告写入不得提交事务"); }
+            @Override protected void doRollback(DefaultTransactionStatus status) { rollbacks.incrementAndGet(); }
+        };
+        ProxyFactory factory = new ProxyFactory(service);
+        factory.addAdvice(new TransactionInterceptor(transactions, new AnnotationTransactionAttributeSource()));
+        ReportService transactional = (ReportService) factory.getProxy();
+        RuntimeException failure = new IllegalStateException("第二批写入失败");
+        when(details.insertViolationBatch(any())).thenReturn(200).thenThrow(failure);
+        ExecutionRecord record = record(401, 0.0);
+        record.setEvaluationStatus("SUCCESS");
+        assertSame(failure, assertThrows(RuntimeException.class,
+                () -> transactional.saveEvaluation(record, Collections.nCopies(401, violation("值")))));
+        assertEquals(1, rollbacks.get());
+        verify(details, times(2)).insertViolationBatch(any());
     }
 
     private Rule rule()

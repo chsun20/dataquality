@@ -2,6 +2,11 @@ package com.ruoyi.dqservice;
 
 import com.ruoyi.common.core.exception.ServiceException;
 import com.ruoyi.dqservice.connecter.DroolsManager;
+import com.ruoyi.dqservice.connecter.CompiledRuleCache;
+import com.ruoyi.dqservice.dto.ColInfo;
+import com.ruoyi.dqservice.template.impl.*;
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ruoyi.dqservice.domain.Rule;
 import com.ruoyi.dqservice.mapper.RuleMapper;
 import com.ruoyi.dqservice.service.ReportService;
@@ -165,6 +170,73 @@ class QualityExecutionTest
         assertNull(result.get("passRate"));
         verify(session).close();
         verify(reports).saveEvaluation(argThat(r -> "FAILED".equals(r.getEvaluationStatus())), eq(Collections.emptyList()));
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void realMixedTemplatesUseCachedCompilationAndDoNotDoubleCountContextChecks() throws Exception
+    {
+        addRows(4);
+        Object[] values = {null, "", "ABC", "x"};
+        for (int i = 0; i < values.length; i++) rows.get(i).put("value", values[i]);
+        RuleTemplateRegistry registry = new RuleTemplateRegistry(Arrays.asList(
+                new NullCountTemplate(), new RegexMatchTemplate(), new NotBlankTemplate()));
+        CompiledRuleCache cache = new CompiledRuleCache();
+        DroolsManager realDrools = new DroolsManager(cache);
+        RuleTemplateService templates = new RuleTemplateService();
+        ReflectionTestUtils.setField(templates, "registry", registry);
+        ReflectionTestUtils.setField(templates, "droolsManager", realDrools);
+        ReflectionTestUtils.setField(service, "registry", registry);
+        ReflectionTestUtils.setField(service, "templates", templates);
+        ReflectionTestUtils.setField(service, "droolsManager", realDrools);
+        ColInfo col = new ColInfo();
+        col.setName("value");
+        col.setType("varchar");
+        col.addRule("nullCount", null);
+        col.addRule("regexMatch", Collections.singletonMap("pattern", "[A-Z]+"));
+        col.addRule("notBlank", null);
+        rule.setCols(new ColInfo[]{col});
+        templates.build(rule);
+        for (int run = 0; run < 2; run++)
+        {
+            Map<String, Object> result = service.execute(1L, 100);
+            assertEquals("SUCCESS", result.get("evaluationStatus"));
+            assertEquals(5, result.get("violationCount"));
+            assertEquals(3, result.get("violationRows"));
+            assertEquals(25.0, result.get("passRate"));
+            List<Map<String, Object>> fields = (List<Map<String, Object>>) result.get("fieldStats");
+            assertEquals(1, fields.size());
+            assertEquals(5, fields.get(0).get("count"));
+            JsonNode counts = new ObjectMapper().readTree((String) result.get("checkCounts"));
+            assertEquals(3, counts.size());
+            for (JsonNode count : counts)
+            {
+                String code = count.get("templateCode").asText();
+                assertEquals("regexMatch".equals(code) ? 3 : 4, count.get("checked").asInt());
+                assertEquals("regexMatch".equals(code) ? 1 : 0, count.get("skipped").asInt());
+                assertEquals("nullCount".equals(code) ? 1 : 2, count.get("violations").asInt());
+                assertEquals(0, count.get("unverifiable").asInt());
+            }
+        }
+        assertEquals(1, cache.getBuildSuccessCount());
+        verify(reports, times(2)).saveEvaluation(argThat(r -> r.getViolationCount() == 5 && r.getViolationRows() == 3), anyList());
+    }
+
+    @Test
+    void partialAggregationFailureClearsFieldStatisticsAndPersistenceFailurePropagates()
+    {
+        addRows(1);
+        when(drools.fireRules(anyString(), anyCollection(), any(QualityExecutionContext.class)))
+                .thenReturn(Arrays.asList(violation(1), violation(2)));
+        Map<String, Object> result = service.execute(1L, 100);
+        assertEquals("FAILED", result.get("evaluationStatus"));
+        assertEquals(Collections.emptyList(), result.get("fieldStats"));
+        assertEquals(Collections.emptyList(), result.get("violations"));
+        when(drools.fireRules(anyString(), anyCollection(), any(QualityExecutionContext.class)))
+                .thenReturn(Collections.emptyList());
+        RuntimeException failure = new IllegalStateException("报告写入失败");
+        when(reports.saveEvaluation(any(), anyList())).thenThrow(failure);
+        assertSame(failure, assertThrows(RuntimeException.class, () -> service.execute(1L, 100)));
     }
 
     private void addRows(int count)

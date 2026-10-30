@@ -17,7 +17,7 @@ import java.util.regex.Pattern;
  */
 public final class DrlSupport
 {
-    /** DRL 固定头部，package 固定因为每次执行都用独立的 KieHelper 编译 */
+    /** DRL 固定头部，各编译产物由独立模块坐标隔离，同一内容可复用 KieBase。 */
     public static final String HEADER =
             "package dq.dynamic\n"
             + "import java.util.Map\n"

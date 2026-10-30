@@ -4,8 +4,13 @@ import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.ruoyi.common.core.exception.ServiceException;
 import com.ruoyi.dqservice.util.RuleParser;
+import com.ruoyi.dqservice.util.QualityStatistics;
+import java.math.BigDecimal;
 import java.time.Instant;
+import java.time.ZoneId;
 import java.util.*;
+import java.util.regex.Pattern;
+import java.util.stream.Collectors;
 import lombok.Getter;
 
 /** 一次执行一个实例，只保存值、索引与计数，不持有连接或数据源访问方法。 */
@@ -16,6 +21,9 @@ public final class QualityExecutionContext
     private final Map<String, ReferenceData> references = new HashMap<>();
     private final Map<String, Counter> counters = new LinkedHashMap<>();
     private final Map<String, Map<String, String>> parameters = new HashMap<>();
+    private final Map<String, DerivedParameters> derived = new HashMap<>();
+    private final Map<String, Pattern> regexPatterns = new HashMap<>();
+    private final Map<String, Set<String>> enumValues = new HashMap<>();
     private final Map<String, Map<List<Object>, Integer>> groups = new HashMap<>();
     private static final ObjectMapper JSON = new ObjectMapper();
 
@@ -51,12 +59,38 @@ public final class QualityExecutionContext
             if (check.getCheckId().equals(result.get("checkId"))) counter.violations++;
     }
 
+    /** 主执行链路使用已经聚合的计数，不再次遍历事实或结果。 */
+    public void countLegacyTemplate(TemplateCheck check, String dimension, QualityStatistics.Summary summary)
+    {
+        register(check.getCheckId(), check.getTemplate(), check.getField(), dimension);
+        Counter counter = counters.get(check.getCheckId());
+        boolean includeNull = "nullCount".equals(check.getTemplate()) || ("uniqueCheck".equals(check.getTemplate())
+                && "视为重复".equals(check.getParams().get("nullMode")));
+        int skipped = includeNull ? 0 : Objects.requireNonNull(summary.getNullsByField().get(check.getField()));
+        counter.skipped += skipped;
+        counter.checked += rows.size() - skipped;
+        counter.violations += summary.getResultsByCheck().getOrDefault(check.getCheckId(), 0);
+    }
+
+    /** 仅缓存参数，不缓存行的求值结果；由 DRL 的非空保护后调用。 */
+    public boolean matchesRegex(String pattern, String value)
+    {
+        return regexPatterns.computeIfAbsent(pattern, Pattern::compile).matcher(value).matches();
+    }
+
+    public boolean matchesEnum(String values, String value)
+    {
+        return enumValues.computeIfAbsent(values, raw -> Collections.unmodifiableSet(Arrays.stream(raw.split(","))
+                .map(String::trim).filter(s -> !s.isEmpty()).collect(Collectors.toSet()))).contains(value);
+    }
+
     public void evaluate(String id, String rule, String code, String field, String type, String dimension,
             String jsonParams, Map<String, Object> row, List<Map<String, Object>> results)
     {
         register(id, code, field, dimension);
         Counter counter = counters.get(id);
         Map<String, String> p = parameters.computeIfAbsent(id, k -> parse(jsonParams));
+        DerivedParameters d = derived.computeIfAbsent(id, k -> new DerivedParameters(p, type));
         Object value = row.get(field);
         Object comparison = null;
         String resultType = "VIOLATION";
@@ -69,7 +103,7 @@ public final class QualityExecutionContext
                         .allMatch(c -> Character.isWhitespace(c) || Character.isSpaceChar(c)))) reason = "字段为 NULL、空字符串或纯空白";
                 break;
             case "compositeUnique":
-                involved = ContextRuleTemplate.fields(p);
+                involved = d.fields();
                 List<Object> tuple = tuple(row, involved, p);
                 if (tuple == null) { counter.skipped++; return; }
                 final List<String> fields = involved;
@@ -89,7 +123,7 @@ public final class QualityExecutionContext
                 involved.add(other);
                 comparison = row.get(other);
                 if (value == null || comparison == null) { counter.skipped++; return; }
-                int cmp = QualityTypes.compare(value, comparison, type, ContextRuleTemplate.zone(p));
+                int cmp = QualityTypes.comparePrepared(value, comparison, d.kind(), d.zone());
                 String op = p.get("operator");
                 boolean valid = "EQ".equals(op) ? cmp == 0 : "NE".equals(op) ? cmp != 0 : "GT".equals(op) ? cmp > 0
                         : "GE".equals(op) ? cmp >= 0 : "LT".equals(op) ? cmp < 0 : cmp <= 0;
@@ -97,12 +131,10 @@ public final class QualityExecutionContext
                 break;
             case "freshness":
                 if (value == null) { counter.skipped++; return; }
-                long[] seconds = ContextRuleTemplate.windowSeconds(p);
-                Instant time = QualityTypes.instant(value, ContextRuleTemplate.zone(p));
-                Instant lower = detectedAt.minusSeconds(seconds[0]);
-                Instant upper = detectedAt.plusSeconds(seconds[1]);
-                comparison = lower + " ～ " + upper;
-                if (time.isBefore(lower) || time.isAfter(upper)) reason = "时间超出本次检测的新鲜度窗口";
+                FreshnessWindow window = d.window(detectedAt);
+                Instant time = QualityTypes.instant(value, d.zone());
+                comparison = window.description;
+                if (time.isBefore(window.lower) || time.isAfter(window.upper)) reason = "时间超出本次检测的新鲜度窗口";
                 break;
             case "referenceExists":
             case "referenceMatch":
@@ -125,10 +157,10 @@ public final class QualityExecutionContext
                     if (value == null || comparison == null) { reason = "源值或参考值为空，无法核验"; resultType = "UNVERIFIABLE"; }
                     else
                     {
-                        boolean equal = "NUMBER".equals(QualityTypes.kind(type))
+                        boolean equal = "NUMBER".equals(d.kind())
                                 ? QualityTypes.number(value).subtract(QualityTypes.number(comparison)).abs()
-                                        .compareTo(ContextRuleTemplate.tolerance(p)) <= 0
-                                : QualityTypes.compare(value, comparison, type, ContextRuleTemplate.zone(p)) == 0;
+                                        .compareTo(d.tolerance()) <= 0
+                                : QualityTypes.comparePrepared(value, comparison, d.kind(), d.zone()) == 0;
                         if (!equal) reason = "与可信参考值不一致";
                     }
                 }
@@ -154,6 +186,72 @@ public final class QualityExecutionContext
             for (String name : involved) values.put(name, row.get(name));
             detail.put("involvedFields", values);
             results.add(detail);
+        }
+    }
+
+    /** 各派生值首次实际使用时才计算，避免提前触发原本被 NULL 保护跳过的异常。 */
+    private static final class DerivedParameters
+    {
+        private final Map<String, String> params;
+        private final String type;
+        private List<String> fields;
+        private String kind;
+        private ZoneId zone;
+        private BigDecimal tolerance;
+        private FreshnessWindow window;
+
+        private DerivedParameters(Map<String, String> params, String type)
+        {
+            this.params = params;
+            this.type = type;
+        }
+
+        private List<String> fields()
+        {
+            if (fields == null) fields = Collections.unmodifiableList(ContextRuleTemplate.fields(params));
+            return fields;
+        }
+
+        private String kind()
+        {
+            if (kind == null) kind = QualityTypes.kind(type);
+            return kind;
+        }
+
+        private ZoneId zone()
+        {
+            if (zone == null) zone = ZoneId.of(ContextRuleTemplate.zone(params));
+            return zone;
+        }
+
+        private BigDecimal tolerance()
+        {
+            if (tolerance == null) tolerance = ContextRuleTemplate.tolerance(params);
+            return tolerance;
+        }
+
+        private FreshnessWindow window(Instant detectedAt)
+        {
+            if (window == null)
+            {
+                long[] seconds = ContextRuleTemplate.windowSeconds(params);
+                window = new FreshnessWindow(detectedAt.minusSeconds(seconds[0]), detectedAt.plusSeconds(seconds[1]));
+            }
+            return window;
+        }
+    }
+
+    private static final class FreshnessWindow
+    {
+        private final Instant lower;
+        private final Instant upper;
+        private final String description;
+
+        private FreshnessWindow(Instant lower, Instant upper)
+        {
+            this.lower = lower;
+            this.upper = upper;
+            description = lower + " ～ " + upper;
         }
     }
 

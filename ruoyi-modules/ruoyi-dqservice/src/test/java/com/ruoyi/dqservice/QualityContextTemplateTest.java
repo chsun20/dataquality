@@ -8,6 +8,7 @@ import java.math.BigDecimal;
 import java.time.*;
 import java.util.*;
 import org.junit.jupiter.api.Test;
+import org.springframework.test.util.ReflectionTestUtils;
 import static org.junit.jupiter.api.Assertions.*;
 
 /** 所有新增模板均经真实 Drools 编译和执行，不以 Java 单独调用替代。 */
@@ -147,6 +148,101 @@ class QualityContextTemplateTest
         assertEquals(4, hits.stream().filter(h -> "UNVERIFIABLE".equals(h.get("resultType"))).count());
         assertEquals(2, c.getCounters().get(0).getChecked());
         assertEquals(1, c.getCounters().get(0).getViolations());
+    }
+
+    @Test
+    void freshnessPlanReusesDerivedObjectsButNotAnotherExecutionsTime()
+    {
+        List<Map<String, Object>> data = rows(now.minusSeconds(4000), now.minusSeconds(5000));
+        Map<String, String> p = params("duration", "1", "unit", "hours");
+        QualityExecutionContext context = new QualityExecutionContext(now, data);
+        List<Map<String, Object>> hits = run(new FreshnessTemplate(), "timestamp", p, data, context);
+        assertEquals(2, hits.size());
+        assertSame(hits.get(0).get("comparisonValue"), hits.get(1).get("comparisonValue"));
+        Object plan = plans(context).get(ContextRuleTemplate.checkId("v", "freshness"));
+        Object window = ReflectionTestUtils.getField(plan, "window");
+        Object zone = ReflectionTestUtils.getField(plan, "zone");
+        run(new FreshnessTemplate(), "timestamp", p, data, context);
+        assertSame(plan, plans(context).get(ContextRuleTemplate.checkId("v", "freshness")));
+        assertSame(window, ReflectionTestUtils.getField(plan, "window"));
+        assertSame(zone, ReflectionTestUtils.getField(plan, "zone"));
+        QualityExecutionContext later = new QualityExecutionContext(now.plusSeconds(3600), data);
+        List<Map<String, Object>> laterHits = run(new FreshnessTemplate(), "timestamp", p, data, later);
+        assertNotEquals(hits.get(0).get("comparisonValue"), laterHits.get(0).get("comparisonValue"));
+    }
+
+    @Test
+    void compositeFieldListAndToleranceArePreparedOncePerCheck()
+    {
+        List<Map<String, Object>> data = rows(BigDecimal.TEN, BigDecimal.TEN);
+        data.forEach(row -> row.put("other", "x"));
+        QualityExecutionContext context = new QualityExecutionContext(now, data);
+        Map<String, String> unique = params("fields", "[\"v\",\"other\"]");
+        assertEquals(2, run(new CompositeUniqueTemplate(), "decimal", unique, data, context).size());
+        Object plan = plans(context).get(ContextRuleTemplate.checkId("v", "compositeUnique"));
+        Object fields = ReflectionTestUtils.getField(plan, "fields");
+        run(new CompositeUniqueTemplate(), "decimal", unique, data, context);
+        assertSame(fields, ReflectionTestUtils.getField(plan, "fields"));
+
+        data.forEach(row -> row.put("key", 1));
+        Map<String, String> reference = params("referenceSourceId", "1", "referenceTable", "ref", "referenceKey", "id",
+                "referenceValue", "amount", "sourceKey", "key", "basisName", "测试依据", "basisVersion", "v1", "tolerance", "0.01");
+        String id = ContextRuleTemplate.checkId("v", "referenceMatch");
+        context.addReference(id, new QualityExecutionContext.ReferenceData("int", Collections.singletonMap(BigDecimal.ONE, BigDecimal.TEN), now));
+        assertTrue(run(new ReferenceMatchTemplate(), "decimal", reference, data, context).isEmpty());
+        Object referencePlan = plans(context).get(id);
+        Object tolerance = ReflectionTestUtils.getField(referencePlan, "tolerance");
+        Object kind = ReflectionTestUtils.getField(referencePlan, "kind");
+        run(new ReferenceMatchTemplate(), "decimal", reference, data, context);
+        assertSame(tolerance, ReflectionTestUtils.getField(referencePlan, "tolerance"));
+        assertSame(kind, ReflectionTestUtils.getField(referencePlan, "kind"));
+        assertEquals(new BigDecimal("0.01"), tolerance);
+        assertEquals(2, plans(context).size());
+    }
+
+    @Test
+    void cachedPatternsAndEnumsKeepNullEscapingAndExactValueSemantics()
+    {
+        List<Map<String, Object>> data = rows(null, "", "A\"B", "A\\B", "a\"b", " A\"B");
+        QualityExecutionContext context = new QualityExecutionContext(now, data);
+        Map<String, String> regex = params("pattern", "A[\"\\\\]B");
+        assertEquals(3, run(new RegexMatchTemplate(), "varchar", regex, data, context).size());
+        Map<?, ?> patterns = (Map<?, ?>) ReflectionTestUtils.getField(context, "regexPatterns");
+        Object pattern = patterns.values().iterator().next();
+        run(new RegexMatchTemplate(), "varchar", regex, data, context);
+        assertEquals(1, patterns.size());
+        assertSame(pattern, patterns.values().iterator().next());
+        assertEquals(4, run(new RegexMatchTemplate(), "varchar", params("pattern", "a.*"), data, context).size());
+        assertEquals(2, patterns.size());
+
+        Map<String, String> enumeration = params("values", " A\"B , A\\B, , A\"B ");
+        assertEquals(3, run(new EnumMatchTemplate(), "varchar", enumeration, data, context).size());
+        Map<?, ?> values = (Map<?, ?>) ReflectionTestUtils.getField(context, "enumValues");
+        Object allowed = values.values().iterator().next();
+        run(new EnumMatchTemplate(), "varchar", enumeration, data, context);
+        assertSame(allowed, values.values().iterator().next());
+        assertEquals(2, ((Set<?>) allowed).size());
+        assertEquals(4, run(new EnumMatchTemplate(), "varchar", params("values", "a\"b"), data, context).size());
+        assertEquals(2, values.size());
+    }
+
+    @Test
+    void invalidRegexIsNotPreparedForSkippedNullRowsAndFailureDoesNotPoisonNextSession()
+    {
+        List<Map<String, Object>> data = rows((Object) null);
+        QualityExecutionContext context = new QualityExecutionContext(now, data);
+        assertTrue(run(new RegexMatchTemplate(), "varchar", params("pattern", "["), data, context).isEmpty());
+        assertTrue(((Map<?, ?>) ReflectionTestUtils.getField(context, "regexPatterns")).isEmpty());
+        List<Map<String, Object>> nonnull = rows("A");
+        assertThrows(RuntimeException.class, () -> run(new RegexMatchTemplate(), "varchar", params("pattern", "["),
+                nonnull, new QualityExecutionContext(now, nonnull)));
+        assertTrue(run(new RegexMatchTemplate(), "varchar", params("pattern", "["), data,
+                new QualityExecutionContext(now, data)).isEmpty());
+    }
+
+    private Map<?, ?> plans(QualityExecutionContext context)
+    {
+        return (Map<?, ?>) ReflectionTestUtils.getField(context, "derived");
     }
 
     @Test

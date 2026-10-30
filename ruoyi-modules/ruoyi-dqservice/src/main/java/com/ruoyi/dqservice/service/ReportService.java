@@ -76,15 +76,7 @@ public class ReportService
         executionRecordMapper.insertExecutionRecord(record);
 
         Long executionId = record.getExecutionId();
-        if (!violations.isEmpty())
-        {
-            List<ExecutionViolation> details = new ArrayList<>(violations.size());
-            for (Map<String, Object> violation : violations)
-            {
-                details.add(toViolation(executionId, violation));
-            }
-            executionViolationMapper.insertViolationBatch(details);
-        }
+        insertDetails(executionId, violations);
         log.info("执行结果已保存: executionId={} 规则[{}] 违规{}条",
                 executionId, rule.getRuleName(), violations.size());
         return executionId;
@@ -98,11 +90,25 @@ public class ReportService
         if (record.getCreateBy() == null || record.getCreateBy().trim().isEmpty()) record.setCreateBy(currentUsername());
         record.setCreateTime(DateUtils.getNowDate());
         executionRecordMapper.insertExecutionRecord(record);
-        List<ExecutionViolation> details = results.stream().map(r -> toViolation(record.getExecutionId(), r)).collect(Collectors.toList());
-        for (int start = 0; start < details.size(); start += 200)
-            executionViolationMapper.insertViolationBatch(details.subList(start, Math.min(start + 200, details.size())));
+        insertDetails(record.getExecutionId(), results);
         log.info("质控报告已保存：批次={}，状态={}", record.getExecutionId(), record.getEvaluationStatus());
         return record.getExecutionId();
+    }
+
+    /** 仅保留当前批的转换实体；所有批次仍处于调用方同一事务中。 */
+    private void insertDetails(Long executionId, List<Map<String, Object>> results)
+    {
+        List<ExecutionViolation> batch = new ArrayList<>(200);
+        for (Map<String, Object> result : results)
+        {
+            batch.add(toViolation(executionId, result));
+            if (batch.size() == 200)
+            {
+                executionViolationMapper.insertViolationBatch(batch);
+                batch = new ArrayList<>(200);
+            }
+        }
+        if (!batch.isEmpty()) executionViolationMapper.insertViolationBatch(batch);
     }
 
     /** 查询执行记录列表 */

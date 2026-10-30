@@ -29,7 +29,11 @@ public final class QualityTypes
 
     public static Instant instant(Object value, String zone)
     {
-        ZoneId zoneId = ZoneId.of(zone);
+        return instant(value, ZoneId.of(zone));
+    }
+
+    static Instant instant(Object value, ZoneId zoneId)
+    {
         if (value instanceof Instant) return (Instant) value;
         if (value instanceof Timestamp) return ((Timestamp) value).toInstant();
         if (value instanceof java.sql.Date) return ((java.sql.Date) value).toLocalDate().atStartOfDay(zoneId).toInstant();
@@ -48,7 +52,13 @@ public final class QualityTypes
 
     public static int compare(Object left, Object right, String type, String zone)
     {
-        switch (kind(type))
+        String kind = kind(type);
+        return comparePrepared(left, right, kind, "TIME".equals(kind) ? ZoneId.of(zone) : null);
+    }
+
+    static int comparePrepared(Object left, Object right, String kind, ZoneId zone)
+    {
+        switch (kind)
         {
             case "NUMBER": return number(left).compareTo(number(right));
             case "TIME": return instant(left, zone).compareTo(instant(right, zone));

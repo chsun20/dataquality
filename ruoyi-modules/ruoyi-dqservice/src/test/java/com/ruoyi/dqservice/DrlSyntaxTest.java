@@ -1,6 +1,23 @@
 package com.ruoyi.dqservice;
 
+import com.ruoyi.dqservice.util.AprioriMyself;
+import com.ruoyi.dqservice.util.RuleParser;
+import com.sch.order_rules.fact.Bank;
+import com.sch.test.TestDroolsLocal;
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.api.io.TempDir;
+
+import java.io.ObjectInputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.Arrays;
+import java.util.HashSet;
+import java.util.IdentityHashMap;
+import java.util.Set;
+
+import static org.junit.jupiter.api.Assertions.assertThrows;
+import static org.junit.jupiter.api.Assumptions.assumeTrue;
 import org.kie.api.KieBase;
 import org.kie.api.builder.Message;
 import org.kie.api.builder.Results;
@@ -165,6 +182,80 @@ public class DrlSyntaxTest {
         System.out.println("D 违规详情 = " + v);
         assertEquals(1, v.size());
         assertTrue(v.get(0) instanceof Map);
+    }
+
+    @TempDir
+    Path bankTemp;
+
+    private Path bankCsv() throws Exception {
+        Path csv = bankTemp.resolve("bank.csv");
+        Files.write(csv, Arrays.asList(
+                "\"age\";\"job\";\"marital\";\"education\";\"default\";\"balance\";\"housing\";\"loan\";\"contact\";\"day\";\"month\";\"duration\";\"campaign\";\"pdays\";\"previous\";\"poutcome\";\"y\"",
+                "99;\"first\";\"married\";\"primary\";\"no\";10;\"no\";\"no\";\"cellular\";1;\"may\";20;1;-1;0;\"unknown\";\"no\"",
+                "30;\"second\";\"married\";\"primary\";\"no\";11;\"no\";\"no\";\"cellular\";1;\"may\";20;1;-1;0;\"unknown\";\"no\""
+        ), StandardCharsets.UTF_8);
+        return csv;
+    }
+
+    /** 覆盖首行首列、字符串解引号、字段映射、序列化与静态状态重置。 */
+    @Test
+    public void bankCsvAndMiningRoundTrip() throws Exception {
+        Path csv = bankCsv();
+        Path output = bankTemp.resolve("artifacts");
+        List<Bank> banks = RuleParser.saveBankData(csv.toString(), output);
+        assertEquals(2, banks.size());
+        assertEquals("first", banks.get(0).getJob());
+        assertEquals("no", banks.get(0).getIsDefault());
+        try (ObjectInputStream stream = new ObjectInputStream(Files.newInputStream(output.resolve("bank-data.ser")))) {
+            assertEquals(banks, stream.readObject());
+        }
+        int first = AprioriMyself.mine(csv.toString(), output, 0.5, 1);
+        String itemsets = new String(Files.readAllBytes(output.resolve("itemsets.tsv")), StandardCharsets.UTF_8);
+        assertTrue(itemsets.contains("age==99"));
+        assertTrue(itemsets.contains("isDefault==\"no\""));
+        assertEquals(first, AprioriMyself.mine(csv.toString(), output, 0.5, 1));
+        assertTrue(AprioriMyself.mine(csv.toString(), output, 1.0, 1) < first);
+        assertThrows(IllegalArgumentException.class, () -> AprioriMyself.mine(csv.toString(), output, Double.NaN, 1));
+        assertThrows(java.io.UncheckedIOException.class, () -> RuleParser.bankTransactions(bankTemp.resolve("missing.csv").toString()));
+        Files.write(csv, Arrays.asList("wrong;header", "1;2"), StandardCharsets.UTF_8);
+        assertThrows(IllegalArgumentException.class, () -> RuleParser.bankTransactions(csv.toString()));
+    }
+
+    /** 两类排序均保持逐规则、逐行命中身份，DRL 为可直接加载的 UTF-8 文本。 */
+    @Test
+    public void bankGeneratedOrdersPreserveMatches() throws Exception {
+        Path csv = bankCsv();
+        Path output = bankTemp.resolve("orders");
+        List<Bank> banks = RuleParser.saveBankData(csv.toString(), output);
+        AprioriMyself.mine(csv.toString(), output, 0.5, 2);
+        Path input = output.resolve("bank-itemsets.ser");
+        Set<String> expected = RuleParser.expectedBankMatches(input, csv.toString());
+        Map<Bank, Integer> rowIds = new IdentityHashMap<>();
+        for (int i = 0; i < banks.size(); i++) rowIds.put(banks.get(i), i);
+        for (String variant : Arrays.asList("original", "l3-weak", "l3-strong", "l4-weak", "l4-strong")) {
+            String drl = RuleParser.generateBankDrl(input, output, variant, true);
+            assertEquals(drl, new String(Files.readAllBytes(output.resolve(variant + "-check.drl")), StandardCharsets.UTF_8));
+            KieSession session = new KieHelper().addContent(drl, ResourceType.DRL).build().newKieSession();
+            Set<String> matches = new HashSet<>();
+            try {
+                session.setGlobal("matches", matches);
+                session.setGlobal("rowIds", rowIds);
+                session.insert(banks);
+                assertEquals(expected.size(), session.fireAllRules());
+                assertEquals(expected, matches, variant);
+            } finally {
+                session.dispose();
+            }
+        }
+    }
+
+    /** 显式提供 bank.csv 才运行真实数据试跑，普通回归自动跳过。 */
+    @Test
+    public void bankPipelineWhenConfigured() throws Exception {
+        assumeTrue(System.getProperty("bank.csv") != null);
+        TestDroolsLocal.main(new String[]{System.getProperty("bank.csv"), RuleParser.bankOutputDirectory().toString(),
+                System.getProperty("bank.support", "0.3"), System.getProperty("bank.maxItems", "3"),
+                System.getProperty("bank.warmups", "3"), System.getProperty("bank.repeats", "5")});
     }
 
     @SafeVarargs
